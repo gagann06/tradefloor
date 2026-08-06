@@ -1,7 +1,7 @@
-# tradefloor
+# Tradefloor
 
 A limit order book matching engine in Python, with a live depth-of-market trading
-terminal, position and P&L tracking, and a benchmark suite.
+terminal, position and P&L tracking - including a benchmark suite.
 
 The engine implements **price-time priority**: orders match against the best
 available price first, and within a price level in the order they arrived.
@@ -31,7 +31,7 @@ Run the tests:
 pytest
 ```
 
-Start the trading terminal at <http://localhost:5000>:
+Start the trading terminal at <http://localhost:5000> once VS Code Live Server started:
 
 ```bash
 flask --app order_book.api:create_app run --debug
