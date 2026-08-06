@@ -1,4 +1,4 @@
-# tradefloor
+# Tradefloor
 
 A limit order book matching engine in Python, wrapped in a depth-of-market
 trading terminal that replays real market data, tracks your position and P&L,
