@@ -1,1 +1,2 @@
 pytest>=7.4
+flask>=3.0

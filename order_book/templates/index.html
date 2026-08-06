@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOB·SIM — Depth of Market</title>
+<style>
+  :root {
+    --bg: #07080a;
+    --panel: #0e1014;
+    --panel-2: #14171d;
+    --line: #1c2029;
+    --line-2: #262c37;
+    --text: #c3c9d4;
+    --dim: #6b7484;
+    --faint: #464e5c;
+    --bid: #17b978;
+    --bid-bar: rgba(23, 185, 120, 0.20);
+    --ask: #f0464f;
+    --ask-bar: rgba(240, 70, 79, 0.20);
+    --mine: #3d8bfd;
+    --mark: #f2b134;
+    --vol-bar: rgba(120, 132, 152, 0.22);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 12px/1.4 var(--mono);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============ top strip ============ */
+  .topbar {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    min-height: 46px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-right: 1px solid var(--line);
+    font-weight: 700;
+    letter-spacing: 1px;
+    font-size: 13px;
+  }
+  .brand em { font-style: normal; color: var(--faint); font-weight: 400; letter-spacing: 0.5px; }
+
+  .tick {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4px 14px;
+    border-right: 1px solid var(--line);
+    min-width: 88px;
+  }
+  .tick .lbl { font-size: 9px; color: var(--faint); letter-spacing: 0.8px; text-transform: uppercase; }
+  .tick .val { font-size: 15px; font-weight: 600; margin-top: 1px; }
+  .tick .val.up { color: var(--bid); }
+  .tick .val.down { color: var(--ask); }
+  .tick .val.b { color: var(--bid); }
+  .tick .val.a { color: var(--ask); }
+
+  .topbar .sp { flex: 1; }
+
+  .ctrls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-left: 1px solid var(--line);
+  }
+  .conn { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--dim); letter-spacing: 0.6px; }
+  .led { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .led.on { background: var(--bid); box-shadow: 0 0 6px var(--bid); }
+  .led.off { background: var(--ask); }
+
+  button {
+    font: inherit;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--line-2);
+    border-radius: 2px;
+    padding: 5px 10px;
+    cursor: pointer;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+  }
+  button:hover { background: #1b2029; border-color: #333c4a; }
+  button.on { background: var(--mine); border-color: var(--mine); color: #fff; }
+  button.buy { background: var(--bid); border-color: var(--bid); color: #04140d; font-weight: 700; }
+  button.sell { background: var(--ask); border-color: var(--ask); color: #1a0406; font-weight: 700; }
+  button.warn { border-color: #4a2b2e; color: #e08b90; }
+  button.warn:hover { background: #2a1618; }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  input[type="range"] { width: 78px; accent-color: var(--mine); }
+
+  /* ============ layout ============ */
+  .wrap {
+    display: grid;
+    grid-template-columns: 392px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+  .pane > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 9px;
+    border-bottom: 1px solid var(--line);
+    font-size: 9.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .pane > header .aux { color: var(--faint); letter-spacing: 0.5px; }
+  .stack { display: grid; gap: 8px; }
+
+  /* ============ DOM ladder ============ */
+  .ladder-head, .drow {
+    display: grid;
+    grid-template-columns: 62px 44px 76px 68px 76px 44px;
+  }
+  .ladder-head {
+    font-size: 9px;
+    letter-spacing: 0.8px;
+    color: var(--faint);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+  .ladder-head div { padding: 4px 6px; text-align: center; }
+  .ladder-head .l { text-align: right; }
+  .ladder-head .r { text-align: left; }
+
+  .ladder { position: relative; }
+
+  .drow { height: 19px; border-bottom: 1px solid rgba(28, 32, 41, 0.55); }
+  .drow .c {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+    overflow: hidden;
+    font-size: 11.5px;
+  }
+  .drow .c i {
+    position: absolute;
+    top: 1px;
+    bottom: 1px;
+    display: block;
+  }
+  .drow .c b { position: relative; font-weight: 500; }
+
+  .drow .vol { justify-content: flex-end; color: var(--faint); font-size: 10.5px; }
+  .drow .vol i { right: 0; background: var(--vol-bar); }
+
+  .drow .wbuy, .drow .wsell {
+    justify-content: center;
+    color: var(--mine);
+    font-weight: 700;
+    font-size: 10.5px;
+    cursor: default;
+  }
+  .drow .wbuy.has, .drow .wsell.has { cursor: pointer; background: rgba(61, 139, 253, 0.12); }
+  .drow .wbuy.has:hover, .drow .wsell.has:hover { background: rgba(61, 139, 253, 0.28); }
+
+  .drow .bid, .drow .ask { cursor: crosshair; }
+  .drow .bid { justify-content: flex-end; color: var(--bid); }
+  .drow .bid i { right: 0; background: var(--bid-bar); }
+  .drow .ask { justify-content: flex-start; color: var(--ask); }
+  .drow .ask i { left: 0; background: var(--ask-bar); }
+  .drow .bid:hover { background: rgba(23, 185, 120, 0.22); box-shadow: inset 0 0 0 1px var(--bid); }
+  .drow .ask:hover { background: rgba(240, 70, 79, 0.22); box-shadow: inset 0 0 0 1px var(--ask); }
+
+  .drow .px {
+    justify-content: center;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--panel-2);
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+  }
+  .drow.inside .px { color: #fff; }
+  .drow.last .px { background: var(--mark); color: #191203; font-weight: 700; }
+  .drow.hi .px::after { content: "H"; position: absolute; right: 3px; font-size: 8px; color: var(--dim); }
+  .drow.lo .px::after { content: "L"; position: absolute; right: 3px; font-size: 8px; color: var(--dim); }
+
+  .spread-band { background: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(120,132,152,0.05) 4px, rgba(120,132,152,0.05) 8px); }
+
+  /* ============ order entry rail ============ */
+  .rail { border-top: 1px solid var(--line); padding: 8px 9px; display: grid; gap: 7px; }
+  .qty-row { display: flex; align-items: center; gap: 6px; }
+  .qty-row .presets { display: flex; gap: 4px; flex: 1; }
+  .qty-row .presets button { flex: 1; padding: 5px 0; }
+  .qty-in {
+    font: inherit;
+    width: 62px;
+    text-align: center;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--line-2);
+    border-radius: 2px;
+    padding: 5px 4px;
+  }
+  .qty-in:focus { outline: none; border-color: var(--mine); }
+  .px-row { display: grid; grid-template-columns: 62px 1fr 1fr; gap: 6px; }
+  .px-row button { padding: 7px 0; }
+  .px-in { width: 100%; }
+  .mkt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .mkt-row button { padding: 8px 0; font-size: 12px; }
+  .admin-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .admin-row button { font-size: 10.5px; padding: 5px 2px; }
+  .blotter { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+  .blotter b { color: var(--mine); font-weight: 700; }
+  .note { font-size: 10.5px; min-height: 14px; color: var(--dim); }
+  .note.ok { color: var(--bid); }
+  .note.err { color: var(--ask); }
+
+  /* ============ position & P&L ============ */
+  .pnl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 1px;
+    background: var(--line);
+  }
+  .pnl-cell { background: var(--panel); padding: 9px 12px; }
+  .pnl-cell .k { font-size: 9px; letter-spacing: 0.7px; text-transform: uppercase; color: var(--faint); }
+  .pnl-cell .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .pnl-cell.total { background: var(--panel-2); }
+  .pnl-cell.total .v { font-size: 19px; }
+  .v.pos { color: var(--bid); }
+  .v.neg { color: var(--ask); }
+  .v.flat { color: var(--faint); }
+
+  /* ============ chart ============ */
+  .chart { padding: 6px 8px 8px; }
+  svg.px-chart { display: block; width: 100%; height: 168px; }
+  svg.px-chart .grid { stroke: rgba(120,132,152,0.10); stroke-width: 1; }
+  svg.px-chart .area { fill: rgba(61, 139, 253, 0.10); }
+  svg.px-chart .line { fill: none; stroke: var(--mine); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+  svg.px-chart .lastline { stroke: var(--mark); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.75; }
+  .blank { color: var(--faint); font-size: 11px; text-align: center; padding: 62px 0; letter-spacing: 0.5px; }
+
+  /* ============ time & sales ============ */
+  .tape { max-height: 262px; overflow-y: auto; }
+  .tape::-webkit-scrollbar { width: 8px; }
+  .tape::-webkit-scrollbar-thumb { background: #232833; }
+  .ts-head, .ts-row { display: grid; grid-template-columns: 1fr 70px 62px 1fr; }
+  .ts-head {
+    font-size: 9px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--faint);
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+  }
+  .ts-head div, .ts-row div { padding: 3px 8px; }
+  .ts-row { font-size: 11px; border-bottom: 1px solid rgba(28,32,41,0.5); }
+  .ts-row .sz { text-align: right; }
+  .ts-row .agg { text-align: center; font-size: 9.5px; letter-spacing: 0.6px; }
+  .ts-row .ids { text-align: right; color: var(--faint); font-size: 10px; }
+  .ts-row.b .px, .ts-row.b .agg { color: var(--bid); }
+  .ts-row.s .px, .ts-row.s .agg { color: var(--ask); }
+  .ts-row.b { background: rgba(23, 185, 120, 0.05); }
+  .ts-row.s { background: rgba(240, 70, 79, 0.05); }
+  .ts-row.new { animation: pop 0.5s ease-out; }
+  @keyframes pop { from { background: rgba(242, 177, 52, 0.22); } }
+
+  .legend { padding: 7px 9px; border-top: 1px solid var(--line); font-size: 10px; color: var(--faint); line-height: 1.7; }
+  .legend kbd {
+    font: inherit; font-size: 9.5px;
+    border: 1px solid var(--line-2); border-bottom-width: 2px;
+    border-radius: 2px; padding: 0 4px; margin: 0 1px; color: var(--dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">LOB·SIM <em>DOM</em></div>
+  <div class="tick"><div class="lbl">Last</div><div class="val" id="tLast">—</div></div>
+  <div class="tick"><div class="lbl">Bid</div><div class="val b" id="tBid">—</div></div>
+  <div class="tick"><div class="lbl">Ask</div><div class="val a" id="tAsk">—</div></div>
+  <div class="tick"><div class="lbl">Spread</div><div class="val" id="tSpread">—</div></div>
+  <div class="tick"><div class="lbl">Hi / Lo</div><div class="val" id="tRange" style="font-size:12px">— / —</div></div>
+  <div class="tick"><div class="lbl">Volume</div><div class="val" id="tVol" style="font-size:12px">0</div></div>
+  <div class="tick"><div class="lbl">Trades</div><div class="val" id="tCount" style="font-size:12px">0</div></div>
+  <div class="sp"></div>
+  <div class="ctrls">
+    <div class="conn"><span class="led" id="led"></span><span id="connTxt">FLOW OFF</span></div>
+    <input type="range" id="rate" min="1" max="30" value="8" title="synthetic order flow rate">
+    <span style="font-size:10px;color:var(--dim)" id="rateTxt">8/s</span>
+    <button id="btnFlow">Start flow</button>
+    <button id="btnReset" class="warn">Reset book</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- ================= DOM LADDER ================= -->
+  <section class="pane">
+    <header>
+      <span>Depth of Market</span>
+      <span class="aux" id="centreTxt">centred —</span>
+    </header>
+
+    <div class="ladder-head">
+      <div class="l">Vol</div>
+      <div>Buy</div>
+      <div class="l">Bid</div>
+      <div>Price</div>
+      <div class="r">Ask</div>
+      <div>Sell</div>
+    </div>
+    <div class="ladder" id="ladder"></div>
+
+    <div class="rail">
+      <div class="qty-row">
+        <input class="qty-in" id="qty" type="number" min="1" step="1" value="10">
+        <div class="presets">
+          <button data-qty="1">1</button>
+          <button data-qty="5">5</button>
+          <button data-qty="10">10</button>
+          <button data-qty="25">25</button>
+          <button data-qty="100">100</button>
+        </div>
+      </div>
+      <div class="px-row">
+        <input class="qty-in px-in" id="limitPx" type="number" min="1" step="1" placeholder="price">
+        <button class="buy" id="btnLimitBuy">BUY LIMIT</button>
+        <button class="sell" id="btnLimitSell">SELL LIMIT</button>
+      </div>
+      <div class="mkt-row">
+        <button class="buy" id="btnMktBuy">MARKET BUY</button>
+        <button class="sell" id="btnMktSell">MARKET SELL</button>
+      </div>
+      <div class="admin-row">
+        <button id="btnCancelAll" class="warn">Cancel all</button>
+        <button id="btnFlatten" class="warn">Flatten</button>
+        <button id="btnCentre" class="on">Auto-centre</button>
+      </div>
+      <div class="blotter">
+        <span>Working: <b id="wkCount">0</b> orders · <b id="wkQty">0</b> qty</span>
+        <span id="wkSides"></span>
+      </div>
+      <div class="note" id="note"></div>
+    </div>
+  </section>
+
+  <!-- ================= RIGHT COLUMN ================= -->
+  <div class="stack">
+    <section class="pane">
+      <header>
+        <span>Position &amp; P&amp;L</span>
+        <span class="aux" id="pnlAux">marked at last traded price</span>
+      </header>
+      <div class="pnl">
+        <div class="pnl-cell"><div class="k">Position</div><div class="v" id="pPos">FLAT</div></div>
+        <div class="pnl-cell"><div class="k">Avg entry</div><div class="v" id="pAvg">—</div></div>
+        <div class="pnl-cell"><div class="k">Realised</div><div class="v" id="pReal">0.00</div></div>
+        <div class="pnl-cell"><div class="k">Unrealised</div><div class="v" id="pUnreal">0.00</div></div>
+        <div class="pnl-cell total"><div class="k">Total P&amp;L</div><div class="v" id="pTotal">0.00</div></div>
+      </div>
+    </section>
+
+    <section class="pane">
+      <header><span>Price</span><span class="aux" id="chartAux">mid</span></header>
+      <div class="chart">
+        <svg class="px-chart" id="chart" viewBox="0 0 400 168" preserveAspectRatio="none" hidden>
+          <g id="gGrid"></g>
+          <polygon class="area" id="gArea" points=""></polygon>
+          <polyline class="line" id="gLine" points=""></polyline>
+          <line class="lastline" id="gLast" x1="0" x2="400" y1="0" y2="0"></line>
+        </svg>
+        <div class="blank" id="chartBlank">NO TRADES</div>
+      </div>
+    </section>
+
+    <section class="pane">
+      <header><span>Time &amp; Sales</span><span class="aux">aggressor inferred from order sequence</span></header>
+      <div class="tape" id="tape">
+        <div class="ts-head"><div>Price</div><div class="sz">Size</div><div class="agg">Agg</div><div class="ids">Buyer / Seller</div></div>
+        <div class="blank" id="tapeBlank">NO FILLS</div>
+      </div>
+    </section>
+
+    <section class="pane">
+      <div class="legend">
+        Click <span style="color:var(--bid)">bid</span> column to buy at that price · click
+        <span style="color:var(--ask)">ask</span> column to sell · click a
+        <span style="color:var(--mine)">blue</span> working cell to cancel your orders there.<br>
+        Or type a price and use <b>BUY/SELL LIMIT</b> to work an order anywhere, including off-ladder.<br>
+        <kbd>B</kbd> market buy · <kbd>S</kbd> market sell · <kbd>F</kbd> flatten · <kbd>Esc</kbd> cancel all ·
+        <kbd>C</kbd> re-centre · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> size presets.<br>
+        P&amp;L marks your open position against the last traded price; only closing trades realise.<br>
+        Synthetic flow is generated in the browser and submitted through the real REST API; the
+        matching engine stays single-threaded and the Flask layer serialises access.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const ME = "me";               // owner tag for your orders; the flow trades as "flow"
+const ANCHOR = 100;
+const ROWS = 31;               // ladder rows (odd → true centre)
+const POLL_MS = 200;
+const MAX_POINTS = 180;
+const PRESETS = [1, 5, 10, 25, 100];
+
+const state = {
+  running: false,
+  rate: 8,
+  fair: ANCHOR,      // flow's view of fair value; passive quotes hang off this
+  regime: null,      // REGIMES is declared below; the first tick picks one
+  regimeTicks: 0,
+  intensity: 1,
+  snapshot: null,
+  flowIds: [],                 // synthetic resting orders, for churn
+  myOrders: new Map(),         // order_id -> order dict (mine only)
+  myIds: new Set(),
+  prices: [],
+  lastPrice: null,
+  prevPrice: null,
+  position: null,
+  ladderCentre: null,
+  autoCentre: true,
+  seenTrades: 0,
+  flowTimer: null,
+  // bumped on reset; a poll that started before the bump is discarded, so its
+  // late-arriving result can't repopulate state the reset just cleared
+  epoch: 0,
+};
+
+const $ = (id) => document.getElementById(id);
+const rint = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const fmt = (v) => (v === null || v === undefined ? "—" : v.toLocaleString());
+
+/* ---------------- API ---------------- */
+
+// `mine` decides both who owns the fill for P&L purposes and whether the order
+// is tracked as one of your working orders on the ladder.
+async function submitOrder(side, price, quantity, orderType = "limit", mine = false) {
+  const owner = mine ? ME : "flow";
+  const payload =
+    orderType === "market"
+      ? { side, quantity, order_type: "market", owner }
+      : { side, price, quantity, owner };
+
+  const res = await fetch("/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || "rejected");
+
+  // only what actually rests can be cancelled later — a market order's
+  // remainder is cancelled outright, never booked
+  if (body.resting) {
+    if (mine) state.myIds.add(body.order_id);
+    else {
+      state.flowIds.push(body.order_id);
+      if (state.flowIds.length > 400) state.flowIds.splice(0, 200);
+    }
+  }
+  return body;
+}
+
+const cancelOrder = (id) => fetch(`/orders/${id}`, { method: "DELETE" }).then((r) => r.ok);
+
+// One request per frame. Asking for our working orders as part of the snapshot
+// keeps the whole screen consistent and halves the request rate — at 5 frames a
+// second against a lock-serialised engine, a second round-trip per frame is the
+// difference between comfortable and connection-starved.
+const fetchSnapshot = async () => {
+  // remember which ids this request asked about — see applyWorking
+  const asked = [...state.myIds];
+  const snap = await fetch(
+    `/book/snapshot?trades=40&owner=${ME}&working=${asked.join(",")}`
+  ).then((r) => r.json());
+  snap.askedFor = asked;
+  return snap;
+};
+
+function applyWorking(list, asked) {
+  const askedFor = new Set(asked);
+  const returned = new Set(list.map((o) => o.order_id));
+
+  // Only forget an id the server was actually asked about and did not return —
+  // that means it filled or was cancelled. An id added while this request was in
+  // flight was never asked about, so its absence proves nothing; dropping it
+  // would orphan a live order that we could then neither see nor cancel.
+  for (const id of [...state.myIds]) {
+    if (askedFor.has(id) && !returned.has(id)) state.myIds.delete(id);
+  }
+
+  state.myOrders.clear();
+  for (const o of list) {
+    state.myOrders.set(o.order_id, o);
+    state.myIds.add(o.order_id);
+  }
+}
+
+/* ---------------- synthetic flow ---------------- */
+
+// Price is not scripted. There is no random walk driving the mid — the flow only
+// decides *what orders to send*, and the price is whatever the book prints as a
+// result. Sustained buying eats the offers and the market rises on its own.
+//
+// Regimes give order flow the persistence real markets have: a coin flip every
+// tick produces no trends, only a zigzag between the touch prices.
+const REGIMES = [
+  { name: "balanced",   bias:  0.00, weight: 24, span: [90, 260], intensity: [0.5, 1.0] },
+  { name: "grind up",   bias:  0.42, weight: 26, span: [80, 220], intensity: [0.7, 1.3] },
+  { name: "grind down", bias: -0.42, weight: 26, span: [80, 220], intensity: [0.7, 1.3] },
+  { name: "squeeze",    bias:  0.85, weight:  8, span: [20, 60],  intensity: [1.6, 2.8] },
+  { name: "flush",      bias: -0.85, weight:  8, span: [20, 60],  intensity: [1.6, 2.8] },
+  { name: "quiet",      bias:  0.00, weight:  6, span: [70, 200], intensity: [0.2, 0.5] },
+];
+
+function pickRegime() {
+  const total = REGIMES.reduce((n, r) => n + r.weight, 0);
+  let roll = Math.random() * total;
+  const regime = REGIMES.find((r) => (roll -= r.weight) <= 0) || REGIMES[0];
+  state.regime = regime;
+  state.regimeTicks = rint(regime.span[0], regime.span[1]);
+  state.intensity = regime.intensity[0] + Math.random() * (regime.intensity[1] - regime.intensity[0]);
+}
+
+// Mid price, to fractional precision — the bounce-free series to chart.
+function midOf(snap) {
+  if (!snap) return null;
+  if (snap.best_bid !== null && snap.best_ask !== null) return (snap.best_bid + snap.best_ask) / 2;
+  return snap.last_price;
+}
+
+// Passive flow quotes around FAIR VALUE, never around the current book mid.
+// Quoting around the mid is a feedback loop — the mid is made of those quotes,
+// so every lifted offer is instantly replaced at the same price and the market
+// freezes. Fair value instead moves with order flow: each aggressive order
+// pushes it a little, which is what price impact means. Trends then emerge from
+// sustained one-sided flow rather than being scripted.
+const IMPACT = 0.13;    // fair-value ticks per sqrt-unit of aggressive volume
+
+function applyImpact(side, quantity, snap) {
+  // sqrt, not linear: doubling size does not double impact, and linear scaling
+  // compounds catastrophically once a high-intensity regime raises order sizes
+  state.fair += (side === "buy" ? 1 : -1) * Math.sqrt(quantity) * IMPACT;
+  state.fair += (Math.random() - 0.5) * 0.05;
+
+  // Leak toward the real book. Without this, fair value is an open loop — it
+  // integrates flow forever and drifts away from the market it is supposed to
+  // describe, and passive quotes end up nowhere near the actual book.
+  const mid = midOf(snap);
+  if (mid !== null) state.fair += (mid - state.fair) * 0.02;
+
+  const excursion = state.fair - ANCHOR;
+  if (Math.abs(excursion) > 30) state.fair -= Math.sign(excursion) * 0.6;
+}
+
+function reference(snap) {
+  return Math.max(2, Math.round(state.fair));
+}
+
+const flowSize = (passive) =>
+  Math.max(1, Math.round((passive ? rint(8, 55) : rint(1, 22)) * state.intensity));
+
+async function marketTick() {
+  const snap = state.snapshot;
+  if (--state.regimeTicks <= 0) pickRegime();
+
+  const ref = reference(snap);
+
+  // A rail, not a rubber band: flow is unconstrained inside the band and only
+  // leaned against once price would otherwise wander off the ladder entirely.
+  let bias = state.regime.bias;
+  const excursion = ref - ANCHOR;
+  if (Math.abs(excursion) > 25) bias -= Math.sign(excursion) * 0.45;
+
+  const roll = Math.random();
+
+  try {
+    // churn: pull some resting liquidity
+    if (roll < 0.09 * state.intensity && state.flowIds.length > 15) {
+      const [id] = state.flowIds.splice(rint(0, state.flowIds.length - 1), 1);
+      await cancelOrder(id);
+      return;
+    }
+
+    // aggressive flow — this is what actually moves the price
+    // capped: an uncapped rate makes intense regimes 100% aggressive, which
+    // drains the book faster than passive flow can replenish it
+    if (roll < Math.min(0.55, 0.12 + 0.35 * state.intensity) && snap) {
+      const side = Math.random() < 0.5 + bias * 0.4 ? "buy" : "sell";
+      const book = side === "buy" ? snap.best_ask : snap.best_bid;
+      if (book !== null) {
+        const size = flowSize(false);
+        applyImpact(side, size, snap);
+        return void (await submitOrder(side, null, size, "market"));
+      }
+    }
+
+    // passive flow — replenishes depth around wherever the book now is, leaning
+    // slightly with the regime so one side thins out during a move.
+    // Skewed toward the touch: quoting uniformly 1-7 ticks out leaves the inside
+    // of the book thin, so the spread gapes and every print bounces across it.
+    const side = Math.random() < 0.5 + bias * 0.18 ? "buy" : "sell";
+    const off = 1 + Math.floor(Math.random() ** 2 * 6);
+    await submitOrder(side, Math.max(1, side === "buy" ? ref - off : ref + off), flowSize(true));
+  } catch (_) { /* a rejected synthetic order shouldn't stall the market */ }
+}
+
+// One call, not fourteen. Seeding over individual POSTs took ~4s against the
+// dev server, and flow start is gated behind it — so the market appeared dead
+// for four seconds after pressing Start.
+const seedBook = () =>
+  fetch("/book/seed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mid: ANCHOR, levels: 7, min_size: 10, max_size: 70 }),
+  });
+
+// Self-scheduling rather than setInterval: a tick is a network round-trip, and
+// setInterval fires whether or not the previous one finished. When the server is
+// slower than the interval, that queues work without bound and starves
+// everything else. Chaining means the flow degrades to "as fast as the server
+// allows" instead of collapsing.
+async function flowLoop() {
+  if (!state.running) return;
+  await marketTick();
+  if (!state.running) return;
+  state.flowTimer = setTimeout(flowLoop, 1000 / state.rate);
+}
+
+function scheduleFlow() {
+  clearTimeout(state.flowTimer);
+  if (state.running) flowLoop();
+}
+
+/* ---------------- ladder ---------------- */
+
+function referencePrice(snap) {
+  if (snap.last_price !== null) return snap.last_price;
+  if (snap.best_bid !== null && snap.best_ask !== null) return Math.round((snap.best_bid + snap.best_ask) / 2);
+  return snap.best_bid ?? snap.best_ask ?? ANCHOR;
+}
+
+function centreLadder(snap, force = false) {
+  const ref = referencePrice(snap);
+  const half = Math.floor(ROWS / 2);
+  if (force || state.ladderCentre === null) { state.ladderCentre = ref; return; }
+  // only re-centre once price nears the edge, so rows don't jitter every tick
+  if (state.autoCentre && Math.abs(ref - state.ladderCentre) > half * 0.55) state.ladderCentre = ref;
+}
+
+function renderLadder(snap) {
+  const half = Math.floor(ROWS / 2);
+  const centre = state.ladderCentre;
+
+  const working = { buy: {}, sell: {} };
+  for (const o of state.myOrders.values()) {
+    const bucket = working[o.side];
+    bucket[o.price] = (bucket[o.price] || 0) + o.remaining_quantity;
+  }
+
+  const depths = [...Object.values(snap.bids), ...Object.values(snap.asks), 1];
+  const maxDepth = Math.max(...depths);
+  const maxVol = Math.max(1, ...Object.values(snap.volume_at_price));
+
+  let html = "";
+  for (let p = centre + half; p >= centre - half; p--) {
+    if (p < 1) continue;
+    const bid = snap.bids[p] || 0;
+    const ask = snap.asks[p] || 0;
+    const vol = snap.volume_at_price[p] || 0;
+    const wb = working.buy[p] || 0;
+    const ws = working.sell[p] || 0;
+
+    const cls = ["drow"];
+    if (p === snap.best_bid || p === snap.best_ask) cls.push("inside");
+    if (p === snap.last_price) cls.push("last");
+    if (p === snap.session_high) cls.push("hi");
+    if (p === snap.session_low) cls.push("lo");
+    if (snap.best_bid !== null && snap.best_ask !== null && p > snap.best_bid && p < snap.best_ask)
+      cls.push("spread-band");
+
+    html +=
+      `<div class="${cls.join(" ")}">` +
+        `<div class="c vol">${vol ? `<i style="width:${(vol / maxVol) * 100}%"></i><b>${vol}</b>` : ""}</div>` +
+        `<div class="c wbuy ${wb ? "has" : ""}" data-act="cancel" data-side="buy" data-price="${p}">${wb || ""}</div>` +
+        `<div class="c bid" data-act="buy" data-price="${p}">${bid ? `<i style="width:${(bid / maxDepth) * 100}%"></i><b>${bid}</b>` : ""}</div>` +
+        `<div class="c px">${p}</div>` +
+        `<div class="c ask" data-act="sell" data-price="${p}">${ask ? `<i style="width:${(ask / maxDepth) * 100}%"></i><b>${ask}</b>` : ""}</div>` +
+        `<div class="c wsell ${ws ? "has" : ""}" data-act="cancel" data-side="sell" data-price="${p}">${ws || ""}</div>` +
+      `</div>`;
+  }
+  $("ladder").innerHTML = html;
+  $("centreTxt").textContent = `centred ${centre} · ${state.autoCentre ? "auto" : "locked"}`;
+}
+
+/* ---------------- tape ---------------- */
+
+// order ids are assigned in submission order, so of the two sides of a fill the
+// higher id is the one that arrived later — i.e. the aggressor that crossed.
+const aggressorOf = (t) => (t.buyer_order_id > t.seller_order_id ? "b" : "s");
+
+function renderTape(trades) {
+  const blank = $("tapeBlank");
+  const host = $("tape");
+  host.querySelectorAll(".ts-row").forEach((n) => n.remove());
+  if (!trades.length) { blank.hidden = false; return; }
+  blank.hidden = true;
+
+  const fresh = Math.max(0, trades.length - state.seenTrades);
+  const frag = document.createDocumentFragment();
+  trades
+    .map((t, i) => ({ t, isNew: i >= trades.length - fresh }))
+    .reverse()
+    .forEach(({ t, isNew }) => {
+      const side = aggressorOf(t);
+      const row = document.createElement("div");
+      row.className = `ts-row ${side}${isNew ? " new" : ""}`;
+      row.innerHTML =
+        `<div class="px">${t.price}</div>` +
+        `<div class="sz">${t.quantity}</div>` +
+        `<div class="agg">${side === "b" ? "BUY" : "SELL"}</div>` +
+        `<div class="ids">#${t.buyer_order_id} / #${t.seller_order_id}</div>`;
+      frag.appendChild(row);
+    });
+  host.appendChild(frag);
+}
+
+/* ---------------- chart ---------------- */
+
+function renderChart() {
+  const pts = state.prices;
+  const svg = $("chart");
+  const blank = $("chartBlank");
+  if (pts.length < 2) { svg.hidden = true; blank.hidden = false; return; }
+  svg.hidden = false;
+  blank.hidden = true;
+
+  const lo = Math.min(...pts);
+  const hi = Math.max(...pts);
+  const span = hi - lo || 1;
+  const y = (p) => 158 - ((p - lo) / span) * 148;
+
+  let grid = "";
+  for (let i = 0; i <= 4; i++) {
+    const gy = 10 + (i / 4) * 148;
+    grid += `<line class="grid" x1="0" x2="400" y1="${gy}" y2="${gy}"></line>`;
+  }
+  $("gGrid").innerHTML = grid;
+
+  const coords = pts.map((p, i) => `${((i / (pts.length - 1)) * 400).toFixed(1)},${y(p).toFixed(1)}`);
+  $("gLine").setAttribute("points", coords.join(" "));
+  $("gArea").setAttribute("points", `0,168 ${coords.join(" ")} 400,168`);
+  const ly = y(pts[pts.length - 1]).toFixed(1);
+  $("gLast").setAttribute("y1", ly);
+  $("gLast").setAttribute("y2", ly);
+  $("chartAux").textContent = `mid · ${lo.toFixed(1)} – ${hi.toFixed(1)}`;
+}
+
+/* ---------------- position & P&L ---------------- */
+
+const money = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
+
+function signClass(v) {
+  return v > 0 ? "v pos" : v < 0 ? "v neg" : "v flat";
+}
+
+function renderPnl(pos) {
+  state.position = pos;
+
+  const posEl = $("pPos");
+  posEl.textContent = pos.quantity === 0 ? "FLAT" : (pos.quantity > 0 ? "+" : "−") + Math.abs(pos.quantity);
+  posEl.className = signClass(pos.quantity);
+
+  $("pAvg").textContent = pos.quantity === 0 ? "—" : pos.average_price.toFixed(2);
+  $("pAvg").className = "v";
+
+  $("pReal").textContent = money(pos.realised_pnl);
+  $("pReal").className = signClass(pos.realised_pnl);
+  $("pUnreal").textContent = money(pos.unrealised_pnl);
+  $("pUnreal").className = signClass(pos.unrealised_pnl);
+  $("pTotal").textContent = money(pos.total_pnl);
+  $("pTotal").className = signClass(pos.total_pnl);
+
+  $("pnlAux").textContent =
+    pos.mark_price === null ? "no trades yet — nothing to mark against" : `marked at ${pos.mark_price}`;
+}
+
+/* ---------------- render ---------------- */
+
+function render(snap) {
+  state.snapshot = snap;
+
+  if (snap.last_price !== null && snap.last_price !== state.lastPrice) {
+    state.prevPrice = state.lastPrice;
+    state.lastPrice = snap.last_price;
+  }
+
+  // Chart the MID, sampled once per frame — not the last traded price. Prints
+  // alternate between the bid and the offer depending on which side was the
+  // aggressor, so a last-trade series zigzags across the spread no matter what
+  // the market is really doing. The mid has no such bounce.
+  const mid = midOf(snap);
+  if (mid !== null) {
+    state.prices.push(mid);
+    if (state.prices.length > MAX_POINTS) state.prices.shift();
+  }
+
+  const last = $("tLast");
+  last.textContent = fmt(snap.last_price);
+  last.className = "val";
+  if (snap.prev_price !== null && snap.last_price !== null) {
+    if (snap.last_price > snap.prev_price) last.classList.add("up");
+    else if (snap.last_price < snap.prev_price) last.classList.add("down");
+  }
+
+  $("tBid").textContent = fmt(snap.best_bid);
+  $("tAsk").textContent = fmt(snap.best_ask);
+  $("tSpread").textContent = fmt(snap.spread);
+  $("tRange").textContent = `${fmt(snap.session_high)} / ${fmt(snap.session_low)}`;
+  $("tVol").textContent = fmt(snap.total_volume);
+  $("tCount").textContent = fmt(snap.trade_count);
+
+  let wq = 0, wb = 0, ws = 0;
+  for (const o of state.myOrders.values()) {
+    wq += o.remaining_quantity;
+    if (o.side === "buy") wb += o.remaining_quantity; else ws += o.remaining_quantity;
+  }
+  $("wkCount").textContent = state.myOrders.size;
+  $("wkQty").textContent = wq;
+  $("wkSides").innerHTML = state.myOrders.size
+    ? `<span style="color:var(--bid)">B ${wb}</span> · <span style="color:var(--ask)">S ${ws}</span>`
+    : "";
+
+  renderPnl(snap.position);
+  centreLadder(snap);
+  renderLadder(snap);
+  renderTape(snap.recent_trades);
+  state.seenTrades = snap.recent_trades.length;
+  renderChart();
+}
+
+async function poll() {
+  const epoch = state.epoch;
+  let snap;
+  try {
+    snap = await fetchSnapshot();
+  } catch (_) {
+    $("connTxt").textContent = "DISCONNECTED";
+    $("led").className = "led off";
+    return;
+  }
+  if (epoch !== state.epoch) return;   // a reset landed mid-flight; drop this
+
+  $("connTxt").textContent = state.running ? "FLOW LIVE" : "FLOW OFF";
+  $("led").className = `led ${state.running ? "on" : ""}`;
+  applyWorking(snap.working_orders, snap.askedFor);
+  // deliberately not wrapped: a rendering bug should surface in the console, not
+  // masquerade as a network outage the way it did when one catch covered both
+  render(snap);
+}
+
+/* ---------------- actions ---------------- */
+
+function note(text, kind = "") {
+  const el = $("note");
+  el.textContent = text;
+  el.className = `note ${kind}`;
+}
+
+const qty = () => Math.max(1, Number($("qty").value) || 1);
+
+async function placeLimit(side, price) {
+  try {
+    const r = await submitOrder(side, price, qty(), "limit", true);
+    const filled = r.filled_quantity;
+    note(
+      filled
+        ? `#${r.order_id} ${side} ${price} — filled ${filled}${r.resting ? `, working ${r.remaining_quantity}` : ""}`
+        : `#${r.order_id} ${side} ${qty()} @ ${price} working`,
+      "ok"
+    );
+    poll();
+  } catch (e) { note(e.message, "err"); }
+}
+
+async function placeMarket(side) {
+  try {
+    const r = await submitOrder(side, null, qty(), "market", true);
+    note(
+      !r.filled_quantity
+        ? `#${r.order_id} market ${side} — no liquidity`
+        : r.remaining_quantity
+        ? `#${r.order_id} market ${side} — filled ${r.filled_quantity}, ${r.remaining_quantity} cancelled`
+        : `#${r.order_id} market ${side} — filled ${r.filled_quantity}`,
+      "ok"
+    );
+    poll();
+  } catch (e) { note(e.message, "err"); }
+}
+
+async function cancelAt(side, price) {
+  const ids = [...state.myOrders.values()]
+    .filter((o) => o.side === side && o.price === price)
+    .map((o) => o.order_id);
+  if (!ids.length) return;
+  await Promise.allSettled(ids.map(cancelOrder));
+  note(`cancelled ${ids.length} ${side} order${ids.length > 1 ? "s" : ""} at ${price}`, "ok");
+  poll();
+}
+
+async function placeTypedLimit(side) {
+  const price = Number($("limitPx").value);
+  if (!price || price < 1) return note("enter a price first", "err");
+  placeLimit(side, price);
+}
+
+async function flatten() {
+  const qty = state.position ? state.position.quantity : 0;
+  if (!qty) return note("already flat");
+  // market order in the opposite direction, sized to the position
+  const side = qty > 0 ? "sell" : "buy";
+  try {
+    const r = await submitOrder(side, null, Math.abs(qty), "market", true);
+    note(
+      r.remaining_quantity
+        ? `flatten ${side} — filled ${r.filled_quantity}, ${r.remaining_quantity} unfilled (not enough liquidity)`
+        : `flattened: ${side} ${r.filled_quantity}`,
+      "ok"
+    );
+    poll();
+  } catch (e) { note(e.message, "err"); }
+}
+
+async function cancelAll() {
+  const ids = [...state.myOrders.keys()];
+  if (!ids.length) return note("nothing working");
+  await Promise.allSettled(ids.map(cancelOrder));
+  note(`cancelled ${ids.length} working order${ids.length > 1 ? "s" : ""}`, "ok");
+  poll();
+}
+
+/* ---------------- wiring ---------------- */
+
+$("ladder").addEventListener("click", (e) => {
+  const cell = e.target.closest("[data-act]");
+  if (!cell) return;
+  const price = Number(cell.dataset.price);
+  const act = cell.dataset.act;
+  $("limitPx").value = price;   // mirror it into the entry box so it can be tweaked
+  if (act === "buy") placeLimit("buy", price);
+  else if (act === "sell") placeLimit("sell", price);
+  else if (act === "cancel") cancelAt(cell.dataset.side, price);
+});
+
+$("btnMktBuy").addEventListener("click", () => placeMarket("buy"));
+$("btnMktSell").addEventListener("click", () => placeMarket("sell"));
+$("btnCancelAll").addEventListener("click", cancelAll);
+$("btnFlatten").addEventListener("click", flatten);
+
+// typed price + explicit limit buttons, for placing away from the visible ladder
+$("btnLimitBuy").addEventListener("click", () => placeTypedLimit("buy"));
+$("btnLimitSell").addEventListener("click", () => placeTypedLimit("sell"));
+$("limitPx").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") placeTypedLimit(e.shiftKey ? "sell" : "buy");
+});
+
+$("btnCentre").addEventListener("click", () => {
+  state.autoCentre = !state.autoCentre;
+  $("btnCentre").classList.toggle("on", state.autoCentre);
+  if (state.autoCentre && state.snapshot) centreLadder(state.snapshot, true);
+  poll();
+});
+
+document.querySelectorAll(".presets button").forEach((b) =>
+  b.addEventListener("click", () => { $("qty").value = b.dataset.qty; })
+);
+
+$("btnFlow").addEventListener("click", async () => {
+  state.running = !state.running;
+  $("btnFlow").textContent = state.running ? "Pause flow" : "Start flow";
+  $("btnFlow").classList.toggle("on", state.running);
+  $("connTxt").textContent = state.running ? "FLOW LIVE" : "FLOW OFF";
+  $("led").className = `led ${state.running ? "on" : ""}`;
+  if (state.running) {
+    // ask the server, don't trust the cached snapshot — right after a reset it
+    // can still describe the old book, which would skip seeding and leave the
+    // market empty with nothing for aggressive orders to hit
+    const snap = await fetchSnapshot();
+    if (snap.best_bid === null && snap.best_ask === null) await seedBook();
+    await poll();
+  }
+  scheduleFlow();
+});
+
+$("btnReset").addEventListener("click", async () => {
+  await fetch("/book/reset", { method: "POST" });
+  state.epoch++;
+  state.flowIds = [];
+  state.myOrders.clear();
+  state.myIds.clear();
+  state.prices = [];
+  state.lastPrice = state.prevPrice = null;
+  state.seenTrades = 0;
+  state.fair = ANCHOR;
+  state.regime = null;
+  state.regimeTicks = 0;
+  state.ladderCentre = ANCHOR;
+  state.position = null;
+  note("book reset — position and P&L cleared", "ok");
+  poll();
+});
+
+$("rate").addEventListener("input", (e) => {
+  state.rate = Number(e.target.value);
+  $("rateTxt").textContent = `${state.rate}/s`;
+  scheduleFlow();
+});
+
+document.addEventListener("keydown", (e) => {
+  // guard the type: keydown can target non-Element nodes, which have no matches()
+  if (e.target instanceof Element && e.target.matches("input, textarea")) return;
+  const k = e.key.toLowerCase();
+  if (k === "b") placeMarket("buy");
+  else if (k === "s") placeMarket("sell");
+  else if (k === "f") flatten();
+  else if (k === "escape") cancelAll();
+  else if (k === "c" && state.snapshot) { centreLadder(state.snapshot, true); render(state.snapshot); }
+  else if (PRESETS[Number(k) - 1]) $("qty").value = PRESETS[Number(k) - 1];
+});
+
+// Same reasoning as the flow loop: never have two polls in flight.
+(async function pollLoop() {
+  await poll();
+  setTimeout(pollLoop, POLL_MS);
+})();
+</script>
+</body>
+</html>
