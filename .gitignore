@@ -22,3 +22,6 @@ CLAUDE.md
 .windsurfrules
 .codeium/
 .github/copilot-instructions.md
+
+# journal database
+*.db

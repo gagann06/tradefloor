@@ -4,9 +4,15 @@ from order_book.api import create_app
 
 
 @pytest.fixture
-def client():
-    app = create_app()
-    app.testing = True
+def app():
+    # in-memory journal so tests neither touch nor create journal.db
+    application = create_app(journal_path=":memory:")
+    application.testing = True
+    return application
+
+
+@pytest.fixture
+def client(app):
     return app.test_client()
 
 
@@ -523,6 +529,135 @@ def test_reset_clears_positions(client):
     assert client.get("/positions/me").get_json()["quantity"] == 0
     # reading a position must not resurrect it
     assert client.get("/positions").get_json() == {}
+
+
+def fills_of(app):
+    return app.journal.db.execute(
+        """SELECT side, price, quantity, order_id, best_bid, best_ask, aggressor
+           FROM fills ORDER BY id"""
+    ).fetchall()
+
+
+def test_a_session_is_open_from_startup(client):
+    body = client.get("/journal/session").get_json()
+
+    assert body["session_id"] is not None
+    assert body["ended_at"] is None
+    assert body["fills"] == 0
+
+
+def test_only_the_humans_fills_are_journalled(app, client):
+    """The synthetic flow trades constantly; journalling it would drown the data."""
+    # two bots trading with each other: nothing of mine to record
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 4, "owner": "other"})
+
+    assert fills_of(app) == []
+
+    # now I sell into what is left of the bot's bid
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 3, "owner": "me"})
+
+    assert len(fills_of(app)) == 1
+
+
+def test_crossing_is_recorded_as_aggressive(app, client):
+    client.post("/orders", json={"side": "sell", "price": 103, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 103, "quantity": 4, "owner": "me"})
+
+    side, price, qty, _, _, _, aggressor = fills_of(app)[0]
+
+    assert (side, price, qty) == ("buy", 103, 4)
+    assert aggressor == 1
+
+
+def test_being_hit_on_a_resting_order_is_recorded_as_passive(app, client):
+    """The fill arrives via someone else's request, and must still be mine."""
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "me"})
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 6, "owner": "flow"})
+
+    side, price, qty, _, _, _, aggressor = fills_of(app)[0]
+
+    assert (side, price, qty) == ("buy", 100, 6)
+    assert aggressor == 0
+
+
+def test_touch_is_the_market_before_the_order_not_after(app, client):
+    """The trap: add_order consumes the levels it fills, so reading the book
+    afterwards reports where the market ended up, not where it started."""
+    client.post("/orders", json={"side": "buy", "price": 99, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "price": 101, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "price": 102, "quantity": 10, "owner": "flow"})
+
+    # sweeps 101 entirely and part of 102, leaving the best ask at 102
+    client.post("/orders", json={"side": "buy", "quantity": 15, "order_type": "market", "owner": "me"})
+
+    assert client.get("/book/best").get_json()["best_ask"] == 102
+
+    for _, _, _, _, best_bid, best_ask, _ in fills_of(app):
+        assert best_ask == 101      # arrival price, not the post-sweep 102
+        assert best_bid == 99
+
+
+def test_every_fill_of_a_sweep_is_journalled(app, client):
+    client.post("/orders", json={"side": "sell", "price": 101, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "price": 102, "quantity": 5, "owner": "flow"})
+
+    client.post("/orders", json={"side": "buy", "quantity": 8, "order_type": "market", "owner": "me"})
+
+    assert [(f[1], f[2]) for f in fills_of(app)] == [(101, 5), (102, 3)]
+
+
+def test_a_one_sided_book_journals_a_null_touch(app, client):
+    """Nothing bidding behind you is a real state, not a reason to lose the fill."""
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 5, "order_type": "market", "owner": "me"})
+
+    _, _, _, _, best_bid, best_ask, _ = fills_of(app)[0]
+
+    assert best_bid is None
+    assert best_ask == 100
+
+
+def test_unfilled_orders_are_not_journalled(app, client):
+    """A journal records fills, not intentions."""
+    client.post("/orders", json={"side": "buy", "price": 50, "quantity": 10, "owner": "me"})
+
+    assert fills_of(app) == []
+
+
+def test_reset_closes_the_session_and_opens_another(app, client):
+    first = client.get("/journal/session").get_json()["session_id"]
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 5, "order_type": "market", "owner": "me"})
+
+    body = client.post("/book/reset").get_json()
+
+    assert body["ended_session"] == first
+    assert body["session_id"] != first
+
+    ended_at = app.journal.db.execute(
+        "SELECT ended_at FROM sessions WHERE id = ?", (first,)
+    ).fetchone()[0]
+    assert ended_at is not None
+
+    # the new session starts empty, but the old fills are still on record
+    assert client.get("/journal/session").get_json()["fills"] == 0
+    assert len(fills_of(app)) == 1
+
+
+def test_journal_fills_endpoint_returns_this_session(client):
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 5, "order_type": "market", "owner": "me"})
+
+    body = client.get("/journal/fills").get_json()
+
+    assert len(body) == 1
+    assert body[0]["side"] == "buy"
+    assert body[0]["aggressor"] == 1
+
+    client.post("/book/reset")
+    assert client.get("/journal/fills").get_json() == []
+    assert len(client.get("/journal/fills?all=1").get_json()) == 1
 
 
 def test_fresh_app_per_test_has_isolated_state(client):

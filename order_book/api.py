@@ -1,3 +1,4 @@
+import os
 import random
 import threading
 from itertools import count
@@ -6,11 +7,13 @@ from flask import Flask, jsonify, render_template, request
 
 from order_book.book import OrderBook
 from order_book.enums import OrderType, Side
+from order_book.journal import Journal
 from order_book.order import Order
 from order_book.position import Position
 
 SIDE_MAP = {"buy": Side.BUY, "sell": Side.SELL}
 ORDER_TYPE_MAP = {"limit": OrderType.LIMIT, "market": OrderType.MARKET}
+JOURNAL_OWNER = "me"
 
 
 def position_to_dict(position, mark_price):
@@ -48,10 +51,16 @@ def trade_to_dict(trade):
     }
 
 
-def create_app():
+def create_app(journal_path=None):
     app = Flask(__name__)
     app.book = OrderBook()
     app.order_id_counter = count(1)
+    # Only the human's fills are journalled. The synthetic flow produces
+    # thousands of fills a minute between bots; recording those would swamp the
+    # database and say nothing about how the person is trading.
+    app.journal_owner = JOURNAL_OWNER
+    app.journal = Journal(journal_path or os.environ.get("TRADEFLOOR_JOURNAL", "journal.db"))
+    app.session_id = app.journal.start_session()
     # The matching engine is deliberately single-threaded and lock-free (real
     # engines are, for determinism). Concurrency is the API layer's problem, so
     # every mutation of the shared book is serialised here.
@@ -85,6 +94,34 @@ def create_app():
         """Last traded price, or None before anything has traded."""
         log = app.book.trade_log
         return log[-1].price if log else None
+
+    def journal_rows(trades, incoming_order_id, arrival_bid, arrival_ask):
+        """Build journal rows for the human's fills. Caller must hold the lock.
+
+        The touch passed in is the *arrival* price — the market as it stood
+        before add_order ran. It cannot be read afterwards: matching has already
+        consumed the levels it filled against, so the book now shows where the
+        market ended up rather than where it was when the order was sent. A
+        multi-level sweep shares one arrival touch by design; that is the
+        standard benchmark for measuring what the whole order cost.
+        """
+        rows = []
+        for t in trades:
+            for side, participant_id in (
+                ("buy", t.buyer_order_id),
+                ("sell", t.seller_order_id),
+            ):
+                if app.owners.get(participant_id) != app.journal_owner:
+                    continue
+                # add_order only returns fills caused by the incoming order, so
+                # that order is the aggressor in every one of them; the other
+                # side was resting and got hit.
+                rows.append((
+                    app.session_id, t.timestamp, side, t.price, t.quantity,
+                    participant_id, arrival_bid, arrival_ask,
+                    1 if participant_id == incoming_order_id else 0,
+                ))
+        return rows
 
     @app.get("/")
     def index():
@@ -122,6 +159,10 @@ def create_app():
             return jsonify(error=str(exc)), 400
 
         with app.book_lock:
+            # capture the touch BEFORE matching — afterwards the levels this
+            # order filled against are gone and the book shows a different market
+            arrival_bid = app.book.best_bid()
+            arrival_ask = app.book.best_ask()
             # register ownership first: this order may be one side of its own fills
             app.owners[order_id] = owner
             trades = app.book.add_order(order)
@@ -130,6 +171,12 @@ def create_app():
             # cancelled outright. Same number, different meaning — so say which.
             resting = order_id in app.book.order_id_to_order
             position = position_to_dict(position_for(owner), mark_price())
+            pending = journal_rows(trades, order_id, arrival_bid, arrival_ask)
+
+        # Write outside the lock: a commit is a disk flush, and holding the
+        # matching lock across it would stall every other order behind it.
+        for row in pending:
+            app.journal.record_fill(*row)
 
         return (
             jsonify(
@@ -326,12 +373,49 @@ def create_app():
 
     @app.post("/book/reset")
     def reset():
+        # A reset wipes the book and your P&L, so it is the natural boundary of a
+        # practice session: close the old one out and open a new one.
         with app.book_lock:
             app.book = OrderBook()
             app.order_id_counter = count(1)
             app.owners.clear()
             app.positions.clear()
-        return jsonify(status="reset")
+            finished = app.session_id
+
+        app.journal.end_session(finished)
+        app.session_id = app.journal.start_session()
+
+        return jsonify(status="reset", ended_session=finished, session_id=app.session_id)
+
+    @app.get("/journal/session")
+    def journal_session():
+        row = app.journal.query(
+            "SELECT id, started_at, ended_at FROM sessions WHERE id = ?", (app.session_id,)
+        )[0]
+        counted = app.journal.query(
+            "SELECT COUNT(*) AS n FROM fills WHERE session_id = ?", (app.session_id,)
+        )[0]["n"]
+        return jsonify(
+            session_id=row["id"], started_at=row["started_at"],
+            ended_at=row["ended_at"], fills=counted,
+        )
+
+    @app.get("/journal/fills")
+    def journal_fills():
+        """This session's fills, oldest first. `?all=1` for every session."""
+        try:
+            limit_n = int(request.args.get("limit", 200))
+        except ValueError:
+            return jsonify(error="limit must be an integer"), 400
+
+        if request.args.get("all"):
+            rows = app.journal.query("SELECT * FROM fills ORDER BY id DESC LIMIT ?", (limit_n,))
+        else:
+            rows = app.journal.query(
+                "SELECT * FROM fills WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (app.session_id, limit_n),
+            )
+        return jsonify(list(reversed(rows)))
 
     @app.get("/health")
     def health():
