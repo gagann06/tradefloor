@@ -660,6 +660,44 @@ def test_journal_fills_endpoint_returns_this_session(client):
     assert len(client.get("/journal/fills?all=1").get_json()) == 1
 
 
+def test_journal_stats_on_an_untraded_session(client):
+    body = client.get("/journal/stats").get_json()
+
+    assert body["scope"] == "session"
+    assert body["trips"] == 0
+    assert body["fills"] == 0
+    assert body["win_rate"] == 0.0
+
+
+def test_journal_stats_scores_a_round_trip(client):
+    client.post("/orders", json={"side": "sell", "price": 103, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "flow"})
+    # cross in at 103, then hit the 100 bid to get out -> a losing trip
+    client.post("/orders", json={"side": "buy", "quantity": 10, "order_type": "market", "owner": "me"})
+    client.post("/orders", json={"side": "sell", "quantity": 10, "order_type": "market", "owner": "me"})
+
+    body = client.get("/journal/stats").get_json()
+
+    assert body["trips"] == 1
+    assert body["losses"] == 1
+    assert body["total_pnl"] == -30.0
+    assert body["fills"] == 2
+    assert body["crossed"] == 2              # both legs were aggressive
+    assert body["cross_rate"] == 1.0
+    assert body["measured"] == 1             # the exit emptied the book's far side
+    assert body["total_spread_cost"] > 0
+
+
+def test_journal_stats_all_spans_sessions(client):
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 5, "order_type": "market", "owner": "me"})
+    client.post("/book/reset")
+
+    assert client.get("/journal/stats").get_json()["fills"] == 0
+    assert client.get("/journal/stats?all=1").get_json()["fills"] == 1
+    assert client.get("/journal/stats?all=1").get_json()["scope"] == "all"
+
+
 def test_fresh_app_per_test_has_isolated_state(client):
     resp = client.get("/book/best")
 

@@ -5,6 +5,7 @@ from itertools import count
 
 from flask import Flask, jsonify, render_template, request
 
+from order_book.analysis import session_stats
 from order_book.book import OrderBook
 from order_book.enums import OrderType, Side
 from order_book.journal import Journal
@@ -399,6 +400,20 @@ def create_app(journal_path=None):
             session_id=row["id"], started_at=row["started_at"],
             ended_at=row["ended_at"], fills=counted,
         )
+
+    @app.get("/journal/stats")
+    def journal_stats():
+        """Session summary. `?all=1` scores every session ever recorded."""
+        if request.args.get("all"):
+            fills = app.journal.query("SELECT * FROM fills ORDER BY id")
+            scope = "all"
+        else:
+            fills = app.journal.query(
+                "SELECT * FROM fills WHERE session_id = ? ORDER BY id", (app.session_id,)
+            )
+            scope = "session"
+
+        return jsonify(scope=scope, session_id=app.session_id, **session_stats(fills))
 
     @app.get("/journal/fills")
     def journal_fills():

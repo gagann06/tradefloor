@@ -69,3 +69,45 @@ def round_trips(fills):
             close_trip(fill["timestamp"])
 
     return trips
+
+
+def session_stats(fills):
+    """Summarise a session: direction from the round trips, execution from the fills."""
+    trips = round_trips(fills)
+    wins = [t for t in trips if t["pnl"] > 0]
+    losses = [t for t in trips if t["pnl"] < 0]
+    scratches = [t for t in trips if t["pnl"] == 0]
+
+    priced = []
+    for f in fills:
+        if f["best_bid"] is None or f["best_ask"] is None:
+            continue                      # no mid, so no measurement
+        mid = (f["best_bid"] + f["best_ask"]) / 2
+        edge = f["price"] - mid   if f["side"] == "buy"  else  mid - f["price"]  # buy/sell branch from the table
+        priced.append((edge, f["quantity"], f["aggressor"]))
+
+    # Edge averages can only use fills with a usable mid...
+    crossed = [(edge, qty) for edge, qty, aggressor in priced if aggressor == 1]
+    passive = [(edge, qty) for edge, qty, aggressor in priced if aggressor == 0]
+    # ...but how impatient you were does not depend on whether the book happened
+    # to be one-sided, so counting crossings uses every fill.
+    crossed_count = sum(1 for f in fills if f["aggressor"] == 1)
+
+    return {"trips": len(wins) + len(losses) + len(scratches),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": len(wins)/(len(wins) + len(losses)) if wins or losses else 0.0,
+            "total_pnl": sum(t["pnl"] for t in trips),
+            "average_win": sum(t["pnl"] for t in wins) / len(wins) if wins else 0.0,
+            "average_loss": sum(t["pnl"] for t in losses) / len(losses) if losses else 0.0,
+            "largest_win": max((t["pnl"] for t in wins) ,default=0),
+            "largest_loss": min((t["pnl"] for t in losses),default=0), 
+            "expectancy": sum(t["pnl"] for t in trips)/(len(wins) + len(losses)) if wins or losses else 0.0,
+            "fills": len(fills),
+            "measured": len(priced),
+            "crossed": crossed_count,
+            "cross_rate": crossed_count / len(fills) if fills else 0.0,
+            "avg_edge_crossing": sum(edge for edge, qty in crossed) / len(crossed) if crossed else 0.0,
+            "avg_edge_passive": sum(edge for edge, qty in passive) / len(passive) if passive else 0.0,
+            "total_spread_cost": sum(edge * qty for edge, qty, aggressor in priced)
+            }

@@ -1,11 +1,24 @@
 import pytest
 
-from order_book.analysis import SIDE_LOOKUP, round_trips
+from order_book.analysis import SIDE_LOOKUP, round_trips, session_stats
 from order_book.position import Position
 
 
 def fill(timestamp, side, price, quantity):
-    return {"timestamp": timestamp, "side": side, "price": price, "quantity": quantity}
+    """A journal-shaped fill. The touch defaults to straddling the fill price so
+    the execution stats see something valid; tests that care about execution use
+    execution_fill and set it explicitly."""
+    return {
+        "timestamp": timestamp, "side": side, "price": price, "quantity": quantity,
+        "best_bid": price, "best_ask": price, "aggressor": 1,
+    }
+
+
+def execution_fill(timestamp, side, price, quantity, best_bid, best_ask, aggressor):
+    return {
+        "timestamp": timestamp, "side": side, "price": price, "quantity": quantity,
+        "best_bid": best_bid, "best_ask": best_ask, "aggressor": aggressor,
+    }
 
 
 def test_no_fills_means_no_trips():
@@ -165,3 +178,136 @@ def test_open_position_is_excluded_from_the_total():
 
     assert len(trips) == 1
     assert sum(t["pnl"] for t in trips) == 50.0
+
+
+# --------------------------- session stats: direction ---------------------------
+
+def test_empty_session_reports_zeroes_without_dividing_by_zero():
+    stats = session_stats([])
+
+    assert stats["trips"] == 0
+    assert stats["win_rate"] == 0.0
+    assert stats["expectancy"] == 0.0
+    assert stats["avg_edge_crossing"] == 0.0
+    assert stats["total_spread_cost"] == 0
+
+
+def test_win_rate_and_averages():
+    stats = session_stats([
+        fill(1, "buy", 100, 10), fill(2, "sell", 105, 10),    # +50
+        fill(3, "buy", 100, 10), fill(4, "sell", 98, 10),     # -20
+        fill(5, "sell", 100, 5), fill(6, "buy", 98, 5),       # +10
+    ])
+
+    assert stats["trips"] == 3
+    assert (stats["wins"], stats["losses"]) == (2, 1)
+    assert stats["win_rate"] == pytest.approx(2 / 3)
+    assert stats["total_pnl"] == 40.0
+    assert stats["average_win"] == 30.0
+    assert stats["average_loss"] == -20.0
+    assert stats["largest_win"] == 50.0
+    assert stats["largest_loss"] == -20.0
+    assert stats["expectancy"] == pytest.approx(40 / 3)
+
+
+def test_a_session_with_no_losses_does_not_divide_by_zero():
+    stats = session_stats([fill(1, "buy", 100, 10), fill(2, "sell", 105, 10)])
+
+    assert stats["losses"] == 0
+    assert stats["average_loss"] == 0.0
+    assert stats["largest_loss"] == 0
+
+
+def test_high_win_rate_can_still_lose_money():
+    """Why win rate alone is not a verdict: three small wins, one big loss."""
+    stats = session_stats([
+        fill(1, "buy", 100, 10), fill(2, "sell", 101, 10),    # +10
+        fill(3, "buy", 100, 10), fill(4, "sell", 101, 10),    # +10
+        fill(5, "buy", 100, 10), fill(6, "sell", 101, 10),    # +10
+        fill(7, "buy", 100, 10), fill(8, "sell", 90, 10),     # -100
+    ])
+
+    assert stats["win_rate"] == 0.75
+    assert stats["total_pnl"] == -70.0
+    assert stats["expectancy"] < 0        # the number that tells the truth
+
+
+# --------------------------- session stats: execution ---------------------------
+
+def test_crossing_costs_edge_and_resting_earns_it():
+    """Same 102/103 market, mid 102.5, both sides."""
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 10, 102, 103, 1),    # crossed: paid 0.5
+        execution_fill(2, "sell", 103, 10, 102, 103, 0),   # rested:  earned 0.5
+    ])
+
+    assert stats["avg_edge_crossing"] == 0.5
+    assert stats["avg_edge_passive"] == -0.5
+    assert stats["crossed"] == 1
+    assert stats["cross_rate"] == 0.5
+
+
+def test_a_selling_aggressor_also_shows_a_positive_cost():
+    """The sign convention must not depend on which side you traded."""
+    stats = session_stats([
+        execution_fill(1, "sell", 102, 10, 102, 103, 1),   # hit the bid: paid 0.5
+    ])
+
+    assert stats["avg_edge_crossing"] == 0.5
+
+
+def test_total_spread_cost_is_weighted_by_size():
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 100, 102, 103, 1),   # 0.5 x 100 = 50
+        execution_fill(2, "sell", 103, 10, 102, 103, 0),   # -0.5 x 10 = -5
+    ])
+
+    assert stats["total_spread_cost"] == 45.0
+
+
+def test_crossing_and_resting_can_cancel_out():
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 10, 102, 103, 1),
+        execution_fill(2, "sell", 103, 10, 102, 103, 0),
+    ])
+
+    assert stats["total_spread_cost"] == 0.0
+
+
+def test_fills_without_a_mid_are_excluded_not_counted_as_zero():
+    """A one-sided book gives no mid, so those fills cannot be measured."""
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 10, None, 103, 1),   # unmeasurable
+        execution_fill(2, "buy", 103, 10, 102, 103, 1),    # measurable, +0.5
+    ])
+
+    assert stats["fills"] == 2                 # both happened
+    assert stats["cross_rate"] == 1.0          # but only one was measurable
+    assert stats["avg_edge_crossing"] == 0.5   # not 0.25, which averaging in a zero would give
+    assert stats["total_spread_cost"] == 5.0
+
+
+def test_execution_cost_is_invisible_in_the_direction_stats():
+    """The point of measuring both: you can be right and still lose to the spread."""
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 10, 102, 103, 1),
+        execution_fill(2, "sell", 104, 10, 104, 105, 1),
+    ])
+
+    assert stats["total_pnl"] == 10.0          # direction looks fine
+    assert stats["total_spread_cost"] == 10.0  # and all of it went on spread
+
+
+def test_crossings_are_counted_even_when_unmeasurable():
+    """The aggressor flag is always known; a one-sided book only stops us
+    measuring the edge, not knowing that we crossed."""
+    stats = session_stats([
+        execution_fill(1, "buy", 103, 10, None, 103, 1),   # crossed, no mid
+        execution_fill(2, "buy", 103, 10, 102, 103, 1),    # crossed, measurable
+    ])
+
+    assert stats["fills"] == 2
+    assert stats["measured"] == 1
+    assert stats["crossed"] == 2                # both crossings counted
+    assert stats["cross_rate"] == 1.0
+    assert stats["avg_edge_crossing"] == 0.5    # averaged over the measurable one only
