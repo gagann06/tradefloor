@@ -21,12 +21,13 @@
     --mine: #3d8bfd;
     --mark: #f2b134;
     --vol-bar: rgba(120, 132, 152, 0.22);
+    --topbar-h: 46px;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   }
 
   * { box-sizing: border-box; }
 
-  html, body { height: 100%; }
+  html, body { height: 100%; overflow: hidden; }
   body {
     margin: 0;
     background: var(--bg);
@@ -114,11 +115,25 @@
     grid-template-columns: 392px minmax(0, 1fr);
     gap: 8px;
     padding: 8px;
-    align-items: start;
+    /* fill exactly what is left below the top strip, so nothing scrolls */
+    height: calc(100vh - var(--topbar-h));
+    min-height: 0;
+    align-items: stretch;
   }
-  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  .wrap > * { min-height: 0; }
 
-  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+  /* Below this width the terminal genuinely does not fit; scrolling is the
+     honest fallback rather than shrinking everything into illegibility. */
+  @media (max-width: 900px), (max-height: 620px) {
+    html, body { overflow: auto; }
+    .wrap { grid-template-columns: 1fr; height: auto; align-items: start; }
+    .stack { grid-template-columns: 1fr !important; }
+    .ladder { max-height: none !important; }
+  }
+
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+          display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .pane > header { flex: none; }
   .pane > header {
     display: flex;
     align-items: center;
@@ -132,7 +147,15 @@
     color: var(--dim);
   }
   .pane > header .aux { color: var(--faint); letter-spacing: 0.5px; }
-  .stack { display: grid; gap: 8px; }
+  .stack {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: 0;
+  }
+  .stack > .pnl-pane   { grid-column: 1 / -1; }
+  .stack > .review-pane { grid-column: 1 / -1; }
 
   /* ============ DOM ladder ============ */
   .ladder-head, .drow {
@@ -151,7 +174,7 @@
   .ladder-head .l { text-align: right; }
   .ladder-head .r { text-align: left; }
 
-  .ladder { position: relative; }
+  .ladder { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 
   .drow { height: 19px; border-bottom: 1px solid rgba(28, 32, 41, 0.55); }
   .drow .c {
@@ -207,7 +230,7 @@
   .spread-band { background: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(120,132,152,0.05) 4px, rgba(120,132,152,0.05) 8px); }
 
   /* ============ order entry rail ============ */
-  .rail { border-top: 1px solid var(--line); padding: 8px 9px; display: grid; gap: 7px; }
+  .rail { border-top: 1px solid var(--line); padding: 7px 9px; display: grid; gap: 6px; flex: none; }
   .qty-row { display: flex; align-items: center; gap: 6px; }
   .qty-row .presets { display: flex; gap: 4px; flex: 1; }
   .qty-row .presets button { flex: 1; padding: 5px 0; }
@@ -287,6 +310,16 @@
     font-size: 10.5px; color: var(--faint); min-height: 15px;
   }
   .review-note.warn { color: var(--mark); }
+  .hints { font-size: 9.5px; color: var(--faint); line-height: 1.6; }
+  .hints b { font-weight: 600; }
+  .hints b.b { color: var(--bid); }
+  .hints b.a { color: var(--ask); }
+  .hints b.m { color: var(--mine); }
+  .hints kbd {
+    font: inherit; font-size: 9px;
+    border: 1px solid var(--line-2); border-bottom-width: 2px;
+    border-radius: 2px; padding: 0 3px; margin: 0 1px; color: var(--dim);
+  }
   .feed-strip {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 7px 12px; border-top: 1px solid var(--line);
@@ -296,7 +329,7 @@
 
   /* ============ chart ============ */
   .chart { padding: 6px 8px 8px; }
-  svg.px-chart { display: block; width: 100%; height: 168px; }
+  svg.px-chart { display: block; width: 100%; height: 100%; min-height: 90px; }
   svg.px-chart .grid { stroke: rgba(120,132,152,0.10); stroke-width: 1; }
   svg.px-chart .area { fill: rgba(61, 139, 253, 0.10); }
   svg.px-chart .line { fill: none; stroke: var(--mine); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
@@ -304,7 +337,7 @@
   .blank { color: var(--faint); font-size: 11px; text-align: center; padding: 62px 0; letter-spacing: 0.5px; }
 
   /* ============ time & sales ============ */
-  .tape { max-height: 262px; overflow-y: auto; }
+  .tape { flex: 1; min-height: 0; overflow-y: auto; }
   .tape::-webkit-scrollbar { width: 8px; }
   .tape::-webkit-scrollbar-thumb { background: #232833; }
   .ts-head, .ts-row { display: grid; grid-template-columns: 1fr 70px 62px 1fr; }
@@ -408,12 +441,18 @@
         <span id="wkSides"></span>
       </div>
       <div class="note" id="note"></div>
+      <div class="hints">
+        click <b class="b">bid</b> to buy &middot; <b class="a">ask</b> to sell &middot;
+        <b class="m">blue</b> to cancel &middot;
+        <kbd>B</kbd><kbd>S</kbd> market &middot; <kbd>F</kbd> flatten &middot;
+        <kbd>Esc</kbd> cancel all &middot; <kbd>C</kbd> centre
+      </div>
     </div>
   </section>
 
   <!-- ================= RIGHT COLUMN ================= -->
   <div class="stack">
-    <section class="pane">
+    <section class="pane pnl-pane">
       <header>
         <span>Position &amp; P&amp;L</span>
         <span class="aux" id="pnlAux">marked at last traded price</span>
@@ -448,7 +487,7 @@
       </div>
     </section>
 
-    <section class="pane">
+    <section class="pane review-pane">
       <header>
         <span>Session review</span>
         <span class="aux" id="reviewAux">this session</span>
@@ -504,19 +543,6 @@
       </div>
     </section>
 
-    <section class="pane">
-      <div class="legend">
-        Click <span style="color:var(--bid)">bid</span> column to buy at that price · click
-        <span style="color:var(--ask)">ask</span> column to sell · click a
-        <span style="color:var(--mine)">blue</span> working cell to cancel your orders there.<br>
-        Or type a price and use <b>BUY/SELL LIMIT</b> to work an order anywhere, including off-ladder.<br>
-        <kbd>B</kbd> market buy · <kbd>S</kbd> market sell · <kbd>F</kbd> flatten · <kbd>Esc</kbd> cancel all ·
-        <kbd>C</kbd> re-centre · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> size presets.<br>
-        P&amp;L marks your open position against the last traded price; only closing trades realise.<br>
-        Synthetic flow is generated in the browser and submitted through the real REST API; the
-        matching engine stays single-threaded and the Flask layer serialises access.
-      </div>
-    </section>
   </div>
 </div>
 
@@ -525,7 +551,8 @@
 
 const ME = "me";               // owner tag for your orders; the flow trades as "flow"
 const ANCHOR = 100;
-const ROWS = 31;               // ladder rows (odd → true centre)
+const ROW_H = 19;              // must match .drow height in the CSS
+let ROWS = 31;                 // recomputed from the viewport; odd for a true centre
 const POLL_MS = 200;
 const FEED_SPEED = 8;    // replay points per second, independent of tick rate
 const STATS_MS = 2500;   // session review: slow-moving, and a query over every fill
@@ -559,6 +586,20 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// The ladder takes whatever vertical space is left, so the terminal fits one
+// screen at any window size instead of the page scrolling. Rows are always odd
+// so there is a genuine centre row for the market to sit on.
+function fitLadder() {
+  const available = $("ladder").clientHeight;
+  if (!available) return false;
+  let rows = Math.floor(available / ROW_H);
+  if (rows % 2 === 0) rows -= 1;
+  rows = Math.max(9, Math.min(61, rows));
+  if (rows === ROWS) return false;
+  ROWS = rows;
+  return true;
+}
 const rint = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const fmt = (v) => (v === null || v === undefined ? "—" : v.toLocaleString());
@@ -1132,6 +1173,10 @@ function render(snap) {
     : "";
 
   renderPnl(snap.position);
+  // Cheap self-correction: one clientHeight read per frame, and the ladder is
+  // about to be redrawn anyway. The ResizeObserver below gives an instant
+  // response, but this guarantees the fit is right even if it never fires.
+  fitLadder();
   centreLadder(snap);
   renderLadder(snap);
   renderTape(snap.recent_trades);
@@ -1347,6 +1392,15 @@ document.addEventListener("keydown", (e) => {
   else if (k === "c" && state.snapshot) { centreLadder(state.snapshot, true); render(state.snapshot); }
   else if (PRESETS[Number(k) - 1]) $("qty").value = PRESETS[Number(k) - 1];
 });
+
+// A ResizeObserver on the ladder itself, not a window resize listener: the box
+// can change from a font load or a neighbouring panel growing, with no window
+// resize involved, and relying on the event left the ladder silently clipped
+// (33 rows drawn into space for 21, with no scrollbar to reveal the rest).
+fitLadder();
+new ResizeObserver(() => {
+  if (fitLadder() && state.snapshot) render(state.snapshot);
+}).observe($("ladder"));
 
 loadFeed();
 
