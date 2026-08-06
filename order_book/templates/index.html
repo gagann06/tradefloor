@@ -251,6 +251,42 @@
   .v.neg { color: var(--ask); }
   .v.flat { color: var(--faint); }
 
+  /* ============ session review ============ */
+  .verdict {
+    display: flex;
+    align-items: stretch;
+    gap: 1px;
+    background: var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .verdict .v-cell { background: var(--panel); padding: 9px 12px; flex: 1; }
+  .verdict .v-op {
+    background: var(--panel);
+    display: flex; align-items: center;
+    padding: 0 6px;
+    color: var(--faint); font-size: 15px;
+  }
+  .verdict .k { font-size: 9px; letter-spacing: 0.7px; text-transform: uppercase; color: var(--faint); }
+  .verdict .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .verdict .v-cell.strong { background: var(--panel-2); }
+
+  .review { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+  .rev-col { background: var(--panel); padding: 9px 12px 11px; }
+  .rev-head {
+    font-size: 9px; letter-spacing: 0.7px; text-transform: uppercase;
+    color: var(--faint); margin-bottom: 6px;
+  }
+  .rev-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 11.5px; }
+  .rev-row span { color: var(--dim); }
+  .rev-row b { font-weight: 600; }
+  .rev-row b.pos { color: var(--bid); }
+  .rev-row b.neg { color: var(--ask); }
+  .review-note {
+    padding: 8px 12px; border-top: 1px solid var(--line);
+    font-size: 10.5px; color: var(--faint); min-height: 15px;
+  }
+  .review-note.warn { color: var(--mark); }
+
   /* ============ chart ============ */
   .chart { padding: 6px 8px 8px; }
   svg.px-chart { display: block; width: 100%; height: 168px; }
@@ -406,6 +442,43 @@
     </section>
 
     <section class="pane">
+      <header>
+        <span>Session review</span>
+        <span class="aux" id="reviewAux">this session</span>
+      </header>
+
+      <div class="verdict" id="verdict">
+        <div class="v-cell"><div class="k">P&amp;L at mid</div><div class="v" id="rMid">—</div></div>
+        <div class="v-op">−</div>
+        <div class="v-cell"><div class="k">Spread paid</div><div class="v" id="rSpread">—</div></div>
+        <div class="v-op">=</div>
+        <div class="v-cell strong"><div class="k">Realised</div><div class="v" id="rNet">—</div></div>
+      </div>
+
+      <div class="review">
+        <div class="rev-col">
+          <div class="rev-head">Direction — was I right?</div>
+          <div class="rev-row"><span>Round trips</span><b id="rTrips">0</b></div>
+          <div class="rev-row"><span>Win rate</span><b id="rWinRate">—</b></div>
+          <div class="rev-row"><span>Expectancy / trip</span><b id="rExp">—</b></div>
+          <div class="rev-row"><span>Avg win</span><b id="rAvgWin">—</b></div>
+          <div class="rev-row"><span>Avg loss</span><b id="rAvgLoss">—</b></div>
+          <div class="rev-row"><span>Best / worst</span><b id="rBestWorst">—</b></div>
+        </div>
+        <div class="rev-col">
+          <div class="rev-head">Execution — how did I trade?</div>
+          <div class="rev-row"><span>Fills</span><b id="rFills">0</b></div>
+          <div class="rev-row"><span>Crossed</span><b id="rCrossed">—</b></div>
+          <div class="rev-row"><span>Avg when crossing</span><b id="rEdgeX">—</b></div>
+          <div class="rev-row"><span>Avg when resting</span><b id="rEdgeP">—</b></div>
+          <div class="rev-row"><span>Spread bill</span><b id="rBill">—</b></div>
+          <div class="rev-row"><span>Measured</span><b id="rMeasured">—</b></div>
+        </div>
+      </div>
+      <div class="review-note" id="reviewNote"></div>
+    </section>
+
+    <section class="pane">
       <div class="legend">
         Click <span style="color:var(--bid)">bid</span> column to buy at that price · click
         <span style="color:var(--ask)">ask</span> column to sell · click a
@@ -428,6 +501,7 @@ const ME = "me";               // owner tag for your orders; the flow trades as 
 const ANCHOR = 100;
 const ROWS = 31;               // ladder rows (odd → true centre)
 const POLL_MS = 200;
+const STATS_MS = 2500;   // session review: slow-moving, and a query over every fill
 const MAX_POINTS = 180;
 const PRESETS = [1, 5, 10, 25, 100];
 
@@ -815,6 +889,61 @@ function renderPnl(pos) {
     pos.mark_price === null ? "no trades yet — nothing to mark against" : `marked at ${pos.mark_price}`;
 }
 
+/* ---------------- session review ---------------- */
+
+const ticks = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
+const pct = (v) => `${(v * 100).toFixed(0)}%`;
+
+function renderStats(s) {
+  // Realised P&L is already net of what you gave up crossing. Adding the spread
+  // bill back shows what the same decisions would have made executed at mid —
+  // which separates being right from trading well.
+  const atMid = s.total_pnl + s.total_spread_cost;
+
+  $("rMid").textContent = ticks(atMid);
+  $("rMid").className = signClass(atMid);
+  $("rSpread").textContent = ticks(s.total_spread_cost);
+  $("rSpread").className = s.total_spread_cost > 0 ? "v neg" : "v pos";
+  $("rNet").textContent = ticks(s.total_pnl);
+  $("rNet").className = signClass(s.total_pnl);
+
+  $("rTrips").textContent = s.trips;
+  $("rWinRate").textContent = s.trips ? `${pct(s.win_rate)}  (${s.wins}W / ${s.losses}L)` : "—";
+  $("rExp").textContent = s.trips ? ticks(s.expectancy) : "—";
+  $("rExp").className = s.trips ? signClass(s.expectancy).replace("v ", "") : "";
+  $("rAvgWin").textContent = s.wins ? ticks(s.average_win) : "—";
+  $("rAvgLoss").textContent = s.losses ? ticks(s.average_loss) : "—";
+  // an em dash where there were none, rather than 0.00, which reads as a
+  // break-even trade that happened rather than a trade that never did
+  $("rBestWorst").textContent =
+    `${s.wins ? ticks(s.largest_win) : "—"} / ${s.losses ? ticks(s.largest_loss) : "—"}`;
+
+  $("rFills").textContent = s.fills;
+  $("rCrossed").textContent = s.fills ? `${s.crossed}  (${pct(s.cross_rate)})` : "—";
+  $("rEdgeX").textContent = s.crossed ? ticks(s.avg_edge_crossing) : "—";
+  $("rEdgeP").textContent = s.fills - s.crossed ? ticks(s.avg_edge_passive) : "—";
+  $("rBill").textContent = s.fills ? ticks(s.total_spread_cost) : "—";
+  $("rMeasured").textContent = s.fills ? `${s.measured} of ${s.fills}` : "—";
+
+  const note = $("reviewNote");
+  if (!s.trips) {
+    note.textContent = "No completed round trips yet — close a position to be scored.";
+    note.className = "review-note";
+  } else if (s.total_spread_cost > Math.abs(s.total_pnl) && s.total_spread_cost > 0) {
+    note.textContent = `Spread cost you more than the whole session made or lost. At mid this was ${ticks(atMid)}.`;
+    note.className = "review-note warn";
+  } else {
+    note.textContent = `Expectancy ${ticks(s.expectancy)} per trade over ${s.trips} trip${s.trips > 1 ? "s" : ""}.`;
+    note.className = "review-note";
+  }
+}
+
+async function pollStats() {
+  try {
+    renderStats(await fetch("/journal/stats").then((r) => r.json()));
+  } catch (_) { /* the ladder matters more than the review; fail quietly */ }
+}
+
 /* ---------------- render ---------------- */
 
 function render(snap) {
@@ -1062,6 +1191,13 @@ document.addEventListener("keydown", (e) => {
 (async function pollLoop() {
   await poll();
   setTimeout(pollLoop, POLL_MS);
+})();
+
+// The review is a query over every fill in the session, and the numbers move
+// slowly, so it gets its own much lazier loop rather than riding the ladder's.
+(async function statsLoop() {
+  await pollStats();
+  setTimeout(statsLoop, STATS_MS);
 })();
 </script>
 </body>
