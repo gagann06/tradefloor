@@ -270,7 +270,7 @@
   .verdict .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
   .verdict .v-cell.strong { background: var(--panel-2); }
 
-  .review { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+  .review { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--line); }
   .rev-col { background: var(--panel); padding: 9px 12px 11px; }
   .rev-head {
     font-size: 9px; letter-spacing: 0.7px; text-transform: uppercase;
@@ -281,6 +281,7 @@
   .rev-row b { font-weight: 600; }
   .rev-row b.pos { color: var(--bid); }
   .rev-row b.neg { color: var(--ask); }
+  .rev-row button { font-size: 10px; padding: 4px 8px; }
   .review-note {
     padding: 8px 12px; border-top: 1px solid var(--line);
     font-size: 10.5px; color: var(--faint); min-height: 15px;
@@ -480,6 +481,21 @@
           <div class="rev-row"><span>Spread bill</span><b id="rBill">—</b></div>
           <div class="rev-row"><span>Measured</span><b id="rMeasured">—</b></div>
         </div>
+        <div class="rev-col">
+          <div class="rev-head">Excursion — did I sit through it?</div>
+          <div class="rev-row"><span>Avg worst drawdown</span><b id="rMae">—</b></div>
+          <div class="rev-row"><span>Avg best it reached</span><b id="rMfe">—</b></div>
+          <div class="rev-row"><span>Captured of available</span><b id="rCapture">—</b></div>
+        </div>
+        <div class="rev-col">
+          <div class="rev-head">Session</div>
+          <div class="rev-row"><span>Price marks</span><b id="rMarks">—</b></div>
+          <div class="rev-row"><span>History</span><b id="rScope">this session</b></div>
+          <div class="rev-row" style="margin-top:6px">
+            <button id="btnAllTime">All sessions</button>
+            <button id="btnClearHistory" class="warn">Clear history</button>
+          </div>
+        </div>
       </div>
       <div class="review-note" id="reviewNote"></div>
       <div class="feed-strip">
@@ -532,6 +548,7 @@ const state = {
   lastPrice: null,
   prevPrice: null,
   position: null,
+  statsScope: "session",
   ladderCentre: null,
   autoCentre: true,
   seenTrades: 0,
@@ -990,6 +1007,22 @@ function renderStats(s) {
   $("rBill").textContent = s.fills ? ticks(s.total_spread_cost) : "—";
   $("rMeasured").textContent = s.fills ? `${s.measured} of ${s.fills}` : "—";
 
+  // excursions: measured only where the price path covers the trip
+  $("rMarks").textContent = s.marks ? s.marks.toLocaleString() : "—";
+  $("rTripsMeasured") && ($("rTripsMeasured").textContent = `${s.excursions_measured} of ${s.trips}`);
+  // An em dash means "no trip had a price path to measure against". A real 0.00
+  // means the opposite — it WAS measured, and the trade never once went that
+  // way. Rendering both the same would hide the more damning of the two.
+  const measurable = s.excursions_measured > 0;
+  $("rMae").textContent = measurable ? ticks(s.avg_mae) : "—";
+  $("rMae").className = measurable && s.avg_mae < 0 ? "neg" : "";
+  $("rMfe").textContent = measurable ? ticks(s.avg_mfe) : "—";
+  $("rMfe").className = measurable && s.avg_mfe > 0 ? "pos" : "";
+  // capture rate is meaningless with nothing available to capture
+  $("rCapture").textContent = measurable && s.avg_mfe ? pct(s.capture_rate) : "—";
+  $("rCapture").className = s.capture_rate < 0 ? "neg" : s.capture_rate >= 0.6 ? "pos" : "";
+  $("rScope").textContent = state.statsScope === "all" ? "all sessions" : "this session";
+
   const note = $("reviewNote");
   if (!s.trips) {
     note.textContent = "No completed round trips yet — close a position to be scored.";
@@ -1047,7 +1080,8 @@ async function revealInstrument() {
 
 async function pollStats() {
   try {
-    renderStats(await fetch("/journal/stats").then((r) => r.json()));
+    const scope = state.statsScope === "all" ? "?all=1" : "";
+    renderStats(await fetch(`/journal/stats${scope}`).then((r) => r.json()));
   } catch (_) { /* the ladder matters more than the review; fail quietly */ }
 }
 
@@ -1219,6 +1253,25 @@ $("ladder").addEventListener("click", (e) => {
 });
 
 $("btnReveal").addEventListener("click", revealInstrument);
+
+$("btnAllTime").addEventListener("click", () => {
+  state.statsScope = state.statsScope === "all" ? "session" : "all";
+  $("btnAllTime").textContent = state.statsScope === "all" ? "This session" : "All sessions";
+  $("btnAllTime").classList.toggle("on", state.statsScope === "all");
+  pollStats();
+});
+
+$("btnClearHistory").addEventListener("click", async () => {
+  // destructive and irreversible, so it asks before doing it
+  if (!confirm("Delete every recorded session, fill and price mark? This cannot be undone.")) return;
+  const res = await fetch("/journal/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  note(res.ok ? "history cleared" : "could not clear history", res.ok ? "ok" : "err");
+  pollStats();
+});
 $("btnMktBuy").addEventListener("click", () => placeMarket("buy"));
 $("btnMktSell").addEventListener("click", () => placeMarket("sell"));
 $("btnCancelAll").addEventListener("click", cancelAll);

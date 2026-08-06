@@ -1,6 +1,6 @@
 import pytest
 
-from order_book.analysis import SIDE_LOOKUP, round_trips, session_stats
+from order_book.analysis import SIDE_LOOKUP, excursions, round_trips, session_stats
 from order_book.position import Position
 
 
@@ -311,3 +311,151 @@ def test_crossings_are_counted_even_when_unmeasurable():
     assert stats["crossed"] == 2                # both crossings counted
     assert stats["cross_rate"] == 1.0
     assert stats["avg_edge_crossing"] == 0.5    # averaged over the measurable one only
+
+
+# --------------------------- excursions (MAE / MFE) ---------------------------
+
+def marks_from(*pairs):
+    return [{"timestamp": t, "price": p} for t, p in pairs]
+
+
+PATH = marks_from((1, 100), (2, 99), (3, 96), (4, 101), (5, 112), (6, 104))
+
+
+def trip_over(direction, entry, opened=1, closed=6):
+    return {"opened_at": opened, "closed_at": closed,
+            "direction": direction, "entry_price": entry}
+
+
+def test_mae_and_mfe_on_a_long():
+    """Dipped 4 against you before running 12 in your favour."""
+    assert excursions(trip_over("long", 100.0), PATH) == {"mae": -4.0, "mfe": 12.0}
+
+
+def test_the_extremes_swap_for_a_short():
+    """A short suffers when price rises, so the same path inverts."""
+    assert excursions(trip_over("short", 100.0), PATH) == {"mae": -12.0, "mfe": 4.0}
+
+
+def test_only_marks_inside_the_trip_window_count():
+    """A dip an hour after you closed says nothing about this trade."""
+    early = excursions(trip_over("long", 100.0, opened=1, closed=3), PATH)
+
+    assert early == {"mae": -4.0, "mfe": 0.0}     # never saw the run to 112
+
+
+def test_marks_before_the_trip_are_ignored():
+    late = excursions(trip_over("long", 101.0, opened=4, closed=6), PATH)
+
+    assert late["mae"] == 0.0                     # the dip to 96 was before entry
+    assert late["mfe"] == 11.0
+
+
+def test_no_marks_in_the_window_is_not_measurable():
+    """None rather than zero: zero would claim the price never moved."""
+    assert excursions(trip_over("long", 100.0, opened=50, closed=60), PATH) == {
+        "mae": None, "mfe": None,
+    }
+
+
+def test_excursion_is_measured_from_the_average_entry_not_the_first_mark():
+    """Scaling in means the entry is a blend, and the first mark in the window
+    may be somebody else's trade at an unrelated price."""
+    trip = {"opened_at": 1, "closed_at": 6, "direction": "long", "entry_price": 105.0}
+
+    result = excursions(trip, PATH)
+
+    assert result["mae"] == -9.0                  # 96 against an entry of 105
+    assert result["mfe"] == 7.0                   # 112 against an entry of 105
+
+
+def test_a_trade_that_only_ever_won_has_no_adverse_excursion():
+    rising = marks_from((1, 100), (2, 103), (3, 108))
+    trip = {"opened_at": 1, "closed_at": 3, "direction": "long", "entry_price": 100.0}
+
+    assert excursions(trip, rising) == {"mae": 0.0, "mfe": 8.0}
+
+
+def test_mae_never_exceeds_mfe():
+    for direction in ("long", "short"):
+        result = excursions(trip_over(direction, 100.0), PATH)
+        assert result["mae"] <= result["mfe"]
+
+
+# --------------------------- session stats: excursions ---------------------------
+
+def test_excursion_stats_need_marks():
+    """Without a price path there is nothing to measure against."""
+    stats = session_stats([fill(1, "buy", 100, 10), fill(2, "sell", 105, 10)])
+
+    assert stats["avg_mae"] == 0.0
+    assert stats["avg_mfe"] == 0.0
+    assert stats["capture_rate"] == 0.0
+
+
+def test_capture_rate_exposes_a_winner_cut_short():
+    """The headline use: right about direction, took a quarter of the move."""
+    fills = [fill(1, "buy", 100, 10), fill(10, "sell", 103, 10)]
+    marks = marks_from((1, 100), (3, 96), (5, 112), (9, 105), (10, 103))
+
+    stats = session_stats(fills, marks)
+
+    assert stats["avg_mae"] == -4.0          # went 4 against you first
+    assert stats["avg_mfe"] == 12.0          # was worth 12 at its best
+    assert stats["capture_rate"] == 0.25     # you took 3 of the 12
+
+
+def test_capture_rate_can_exceed_one():
+    """Exiting better than any recorded mark is possible and must not be clamped."""
+    fills = [fill(1, "buy", 100, 10), fill(5, "sell", 120, 10)]
+    marks = marks_from((1, 100), (3, 105))
+
+    assert session_stats(fills, marks)["capture_rate"] > 1.0
+
+
+def test_capture_rate_is_negative_when_a_winner_became_a_loser():
+    fills = [fill(1, "buy", 100, 10), fill(5, "sell", 97, 10)]
+    marks = marks_from((1, 100), (2, 108), (5, 97))
+
+    stats = session_stats(fills, marks)
+
+    assert stats["avg_mfe"] == 8.0           # it was 8 up at one point
+    assert stats["capture_rate"] < 0         # and you finished down
+
+
+def test_a_trade_with_no_favourable_excursion_does_not_divide_by_zero():
+    fills = [fill(1, "buy", 100, 10), fill(5, "sell", 94, 10)]
+    marks = marks_from((1, 100), (3, 94), (5, 94))
+
+    stats = session_stats(fills, marks)
+
+    assert stats["avg_mfe"] == 0.0
+    assert stats["capture_rate"] == 0.0
+
+
+def test_trips_without_marks_in_their_window_are_excluded_not_zeroed():
+    """Averaging in a zero would understate how far trades actually travel."""
+    fills = [
+        fill(1, "buy", 100, 10), fill(5, "sell", 104, 10),      # covered by marks
+        fill(90, "buy", 100, 10), fill(95, "sell", 104, 10),    # no marks in window
+    ]
+    marks = marks_from((1, 100), (3, 112), (5, 104))
+
+    stats = session_stats(fills, marks)
+
+    assert stats["trips"] == 2
+    assert stats["avg_mfe"] == 12.0          # not 6.0, which averaging in a zero gives
+
+
+def test_capture_rate_weights_by_opportunity_not_by_trade_count():
+    """Totals over totals, so a trivial trade cannot dominate the ratio."""
+    fills = [
+        fill(1, "buy", 100, 100), fill(5, "sell", 110, 100),    # big, captured 10 of 10
+        fill(20, "buy", 100, 1), fill(25, "sell", 100, 1),      # tiny, captured 0 of 1
+    ]
+    marks = marks_from((1, 100), (3, 110), (5, 110), (20, 100), (22, 101), (25, 100))
+
+    stats = session_stats(fills, marks)
+
+    # 10 captured of 11 available, not the 50% an averaged-ratios approach gives
+    assert stats["capture_rate"] == pytest.approx(10 / 11)

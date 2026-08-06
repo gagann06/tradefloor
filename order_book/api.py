@@ -70,6 +70,7 @@ def create_app(journal_path=None, data_dir=None):
     # empty data/ directory.
     app.data_dir = pathlib.Path(data_dir) if data_dir is not None else DATA_DIR
     app.feed = load_random_feed(app.data_dir)
+    app.last_mark = None   # last price written to the marks table
     # The matching engine is deliberately single-threaded and lock-free (real
     # engines are, for determinism). Concurrency is the API layer's problem, so
     # every mutation of the shared book is serialised here.
@@ -182,10 +183,23 @@ def create_app(journal_path=None, data_dir=None):
             position = position_to_dict(position_for(owner), mark_price())
             pending = journal_rows(trades, order_id, arrival_bid, arrival_ask)
 
+            # The market's path, recorded for every trade including the bots' —
+            # unlike fills, this is where the price went, not what you did. Each
+            # distinct price is kept, so a sweep through several levels
+            # records all of them rather than only where it stopped. Repeats are
+            # skipped: a row saying the price is still 100 adds nothing.
+            marks = []
+            for t in trades:
+                if t.price != app.last_mark:
+                    app.last_mark = t.price
+                    marks.append((app.session_id, t.timestamp, t.price))
+
         # Write outside the lock: a commit is a disk flush, and holding the
         # matching lock across it would stall every other order behind it.
         for row in pending:
             app.journal.record_fill(*row)
+        for mark in marks:
+            app.journal.record_mark(*mark)
 
         return (
             jsonify(
@@ -389,6 +403,7 @@ def create_app(journal_path=None, data_dir=None):
             app.order_id_counter = count(1)
             app.owners.clear()
             app.positions.clear()
+            app.last_mark = None
             finished = app.session_id
 
         app.journal.end_session(finished)
@@ -460,19 +475,47 @@ def create_app(journal_path=None, data_dir=None):
     def feed_list():
         return jsonify([p.stem for p in available_feeds(app.data_dir)])
 
+    @app.post("/journal/clear")
+    def journal_clear():
+        """Erase all practice history. Irreversible, so it insists on being meant.
+
+        A fresh session is opened immediately: clear_history removes the row the
+        app is currently pointing at, and every later write references it.
+        """
+        data = request.get_json(silent=True) or {}
+        if data.get("confirm") is not True:
+            return jsonify(error="send {\"confirm\": true} — this cannot be undone"), 400
+
+        app.journal.clear_history()
+        # outside clear_history on purpose: it holds the journal lock, and
+        # start_session takes the same one, which would deadlock
+        app.session_id = app.journal.start_session()
+        with app.book_lock:
+            app.last_mark = None
+
+        return jsonify(cleared=True, session_id=app.session_id)
+
     @app.get("/journal/stats")
     def journal_stats():
         """Session summary. `?all=1` scores every session ever recorded."""
         if request.args.get("all"):
             fills = app.journal.query("SELECT * FROM fills ORDER BY id")
+            marks = app.journal.query("SELECT timestamp, price FROM marks ORDER BY id")
             scope = "all"
         else:
             fills = app.journal.query(
                 "SELECT * FROM fills WHERE session_id = ? ORDER BY id", (app.session_id,)
             )
+            marks = app.journal.query(
+                "SELECT timestamp, price FROM marks WHERE session_id = ? ORDER BY id",
+                (app.session_id,),
+            )
             scope = "session"
 
-        return jsonify(scope=scope, session_id=app.session_id, **session_stats(fills))
+        return jsonify(
+            scope=scope, session_id=app.session_id,
+            marks=len(marks), **session_stats(fills, marks),
+        )
 
     @app.get("/journal/fills")
     def journal_fills():

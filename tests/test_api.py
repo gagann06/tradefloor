@@ -777,3 +777,139 @@ def test_reset_draws_a_fresh_instrument(fed_client):
     """Consecutive sessions should not replay the same path from memory."""
     assert fed_client.post("/book/reset").status_code == 200
     assert fed_client.get("/feed").get_json()["loaded"] is True
+
+
+# --------------------------- marks and excursions ---------------------------
+
+def marks_of(app):
+    return [(m["timestamp"], m["price"])
+            for m in app.journal.query("SELECT timestamp, price FROM marks ORDER BY id")]
+
+
+def test_a_trade_records_a_mark(app, client):
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5, "owner": "other"})
+
+    assert [p for _, p in marks_of(app)] == [100]
+
+
+def test_marks_record_the_market_not_just_your_trades(app, client):
+    """Unlike fills, this is where the price went — bots move it too."""
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5, "owner": "other"})
+
+    assert client.get("/journal/fills").get_json() == []     # none of it was mine
+    assert len(marks_of(app)) == 1                           # but the price still moved
+
+
+def test_repeated_trades_at_the_same_price_write_one_mark(app, client):
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 30, "owner": "flow"})
+    for _ in range(3):
+        client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5, "owner": "other"})
+
+    assert len(marks_of(app)) == 1       # "still 100" says nothing new
+
+
+def test_a_sweep_records_every_level_it_passed_through(app, client):
+    """Recording only where it stopped would lose prices the market visited."""
+    for price in (101, 102, 103):
+        client.post("/orders", json={"side": "sell", "price": price, "quantity": 5, "owner": "flow"})
+
+    client.post("/orders", json={"side": "buy", "quantity": 15, "order_type": "market", "owner": "other"})
+
+    assert [p for _, p in marks_of(app)] == [101, 102, 103]
+
+
+def test_stats_report_excursions_from_the_recorded_path(client):
+    # a bot pushes the price down to 96 while I am long, then back up
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 10, "order_type": "market", "owner": "me"})
+
+    client.post("/orders", json={"side": "buy", "price": 96, "quantity": 1, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "price": 96, "quantity": 1, "owner": "other"})
+
+    client.post("/orders", json={"side": "buy", "price": 104, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "sell", "quantity": 10, "order_type": "market", "owner": "me"})
+
+    body = client.get("/journal/stats").get_json()
+
+    assert body["marks"] >= 3
+    assert body["avg_mae"] == -4.0        # the dip to 96 while I held
+    assert body["trips"] == 1
+
+
+def test_reset_starts_a_clean_price_path(app, client):
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5, "owner": "other"})
+    client.post("/book/reset")
+
+    # the same price after a reset is new information again, not a repeat
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5, "owner": "other"})
+
+    assert len(marks_of(app)) == 2
+
+
+# --------------------------- clearing history ---------------------------
+
+def trade_once(client, price=100):
+    client.post("/orders", json={"side": "sell", "price": price, "quantity": 5, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "quantity": 5, "order_type": "market", "owner": "me"})
+
+
+def test_clearing_requires_explicit_confirmation(app, client):
+    """Irreversible, so a stray request must not do it."""
+    trade_once(client)
+
+    assert client.post("/journal/clear").status_code == 400
+    assert client.post("/journal/clear", json={}).status_code == 400
+    assert client.post("/journal/clear", json={"confirm": "yes"}).status_code == 400
+
+    assert len(client.get("/journal/fills?all=1").get_json()) == 1     # untouched
+
+
+def test_clearing_erases_every_table(app, client):
+    trade_once(client)
+    client.post("/book/reset")
+    trade_once(client, price=110)
+
+    assert client.post("/journal/clear", json={"confirm": True}).status_code == 200
+
+    for table in ("sessions", "fills", "marks"):
+        remaining = app.journal.query(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"]
+        assert remaining == (1 if table == "sessions" else 0)   # only the fresh one
+
+
+def test_a_usable_session_exists_after_clearing(app, client):
+    """clear_history deletes the row the app was pointing at."""
+    trade_once(client)
+    body = client.post("/journal/clear", json={"confirm": True}).get_json()
+
+    assert body["session_id"] is not None
+    assert client.get("/journal/session").get_json()["session_id"] == body["session_id"]
+
+    # and the journal still works, with the new session id being real
+    trade_once(client, price=120)
+    assert len(client.get("/journal/fills").get_json()) == 1
+
+
+def test_stats_are_empty_after_clearing(client):
+    trade_once(client)
+    assert client.get("/journal/stats?all=1").get_json()["fills"] == 1
+
+    client.post("/journal/clear", json={"confirm": True})
+
+    stats = client.get("/journal/stats?all=1").get_json()
+    assert stats["fills"] == 0
+    assert stats["trips"] == 0
+    assert stats["total_pnl"] == 0
+
+
+def test_clearing_does_not_hang(app, client):
+    """Regression: starting the new session inside clear_history would deadlock
+    on the journal's own non-reentrant lock."""
+    trade_once(client)
+
+    client.post("/journal/clear", json={"confirm": True})
+
+    assert app.journal.query("SELECT COUNT(*) AS n FROM sessions")[0]["n"] == 1

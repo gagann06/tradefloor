@@ -71,7 +71,28 @@ def round_trips(fills):
     return trips
 
 
-def session_stats(fills):
+def excursions(trip, marks):
+    """MAE and MFE for one trip, from the marks recorded while it was open."""
+    during = [m["price"] for m in marks if trip["opened_at"] <= m["timestamp"] <= trip["closed_at"]]
+
+    if not during:
+        return {"mae": None, "mfe": None}
+
+    low = min(during)
+    high = max(during)
+    entry_price = trip["entry_price"]
+    sign = 1 if trip["direction"] == "long" else -1
+
+    pnl_at_low  = (low  - entry_price) * sign      # sign is +1 long, -1 short
+    pnl_at_high = (high - entry_price) * sign
+
+    mae = min(pnl_at_low, pnl_at_high)
+    mfe = max(pnl_at_low, pnl_at_high)
+
+    return {"mae": mae, "mfe": mfe}
+
+
+def session_stats(fills, marks=None):
     """Summarise a session: direction from the round trips, execution from the fills."""
     trips = round_trips(fills)
     wins = [t for t in trips if t["pnl"] > 0]
@@ -93,6 +114,16 @@ def session_stats(fills):
     # to be one-sided, so counting crossings uses every fill.
     crossed_count = sum(1 for f in fills if f["aggressor"] == 1)
 
+    with_marks = []
+    for trip in trips:
+        e = excursions(trip, marks or [])
+        if e["mae"] is not None:
+            with_marks.append((trip, e))
+
+    available = sum(e["mfe"] for t, e in with_marks)
+    captured = sum(t["pnl"] / t["quantity"] for t, e in with_marks)
+
+
     return {"trips": len(wins) + len(losses) + len(scratches),
             "wins": len(wins),
             "losses": len(losses),
@@ -109,5 +140,9 @@ def session_stats(fills):
             "cross_rate": crossed_count / len(fills) if fills else 0.0,
             "avg_edge_crossing": sum(edge for edge, qty in crossed) / len(crossed) if crossed else 0.0,
             "avg_edge_passive": sum(edge for edge, qty in passive) / len(passive) if passive else 0.0,
-            "total_spread_cost": sum(edge * qty for edge, qty, aggressor in priced)
+            "total_spread_cost": sum(edge * qty for edge, qty, aggressor in priced),
+            "excursions_measured": len(with_marks),
+            "avg_mae": sum(e["mae"] for trip, e in with_marks) / len(with_marks) if with_marks else 0.0,
+            "avg_mfe": sum(e["mfe"] for trip, e in with_marks) / len(with_marks) if with_marks else 0.0,
+            "capture_rate": captured / available if available else 0.0
             }
