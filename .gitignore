@@ -25,3 +25,6 @@ CLAUDE.md
 
 # journal database
 *.db
+
+# downloaded market data
+data/

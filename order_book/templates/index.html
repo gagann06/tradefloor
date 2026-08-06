@@ -286,6 +286,12 @@
     font-size: 10.5px; color: var(--faint); min-height: 15px;
   }
   .review-note.warn { color: var(--mark); }
+  .feed-strip {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 12px; border-top: 1px solid var(--line);
+    font-size: 10.5px; color: var(--dim);
+  }
+  .feed-strip button { font-size: 10px; padding: 4px 9px; }
 
   /* ============ chart ============ */
   .chart { padding: 6px 8px 8px; }
@@ -476,6 +482,10 @@
         </div>
       </div>
       <div class="review-note" id="reviewNote"></div>
+      <div class="feed-strip">
+        <span id="feedLine">loading feed…</span>
+        <button id="btnReveal" disabled>Reveal instrument</button>
+      </div>
     </section>
 
     <section class="pane">
@@ -501,6 +511,7 @@ const ME = "me";               // owner tag for your orders; the flow trades as 
 const ANCHOR = 100;
 const ROWS = 31;               // ladder rows (odd → true centre)
 const POLL_MS = 200;
+const FEED_SPEED = 8;    // replay points per second, independent of tick rate
 const STATS_MS = 2500;   // session review: slow-moving, and a query over every fill
 const MAX_POINTS = 180;
 const PRESETS = [1, 5, 10, 25, 100];
@@ -509,6 +520,7 @@ const state = {
   running: false,
   rate: 8,
   fair: ANCHOR,      // flow's view of fair value; passive quotes hang off this
+  feed: { loaded: false, prices: [], index: 0, moves: [], lastAt: null },
   regime: null,      // REGIMES is declared below; the first tick picks one
   regimeTicks: 0,
   intensity: 1,
@@ -664,17 +676,68 @@ function reference(snap) {
 const flowSize = (passive) =>
   Math.max(1, Math.round((passive ? rint(8, 55) : rint(1, 22)) * state.intensity));
 
+// Advance the real price path by however many points the clock says have
+// elapsed. Returns the move, or null when no feed is loaded so the synthetic
+// generator takes over unchanged.
+//
+// Deliberately driven by wall-clock rather than by tick count: a tick is a
+// network round-trip, so advancing one point per tick makes the market replay
+// at whatever speed the connection happens to allow — slow motion on a bad one.
+// The market should move at its own pace regardless of how fast we can trade.
+function feedStep() {
+  const f = state.feed;
+  if (!f.loaded || f.prices.length < 2) return null;
+
+  const now = performance.now();
+  if (f.lastAt === null) { f.lastAt = now; return null; }
+
+  const perStep = 1000 / FEED_SPEED;
+  const steps = Math.floor((now - f.lastAt) / perStep);
+  if (steps < 1) return null;
+  f.lastAt += steps * perStep;
+
+  const previous = f.prices[f.index];
+  f.index = (f.index + steps) % f.prices.length;   // loop back at the end
+  const price = f.prices[f.index];
+  const change = price - previous;
+
+  // Activity comes from the data rather than being invented: a stretch where
+  // price moved several ticks was a busier stretch than a flat one. Normalised
+  // per step so a slow connection does not read as a volatile market.
+  f.moves.push(Math.abs(change) / steps);
+  if (f.moves.length > 30) f.moves.shift();
+
+  return { price, change, steps };
+}
+
 async function marketTick() {
   const snap = state.snapshot;
-  if (--state.regimeTicks <= 0) pickRegime();
+  const step = feedStep();
+  let bias;
+
+  if (step) {
+    // Real price path: fair value IS the data, and the flow is generated to be
+    // consistent with it. Letting the regime model pick a direction here would
+    // have the tape selling into a rising chart.
+    state.fair = step.price;
+    bias = clamp((step.change / step.steps) * 0.55, -0.9, 0.9);
+    const churn = state.feed.moves.reduce((a, b) => a + b, 0) / state.feed.moves.length;
+    state.intensity = clamp(0.3 + churn * 1.1, 0.25, 3.0);
+    state.regime = { name: "replay", bias };
+  } else {
+    if (--state.regimeTicks <= 0) pickRegime();
+    bias = state.regime.bias;
+  }
 
   const ref = reference(snap);
 
   // A rail, not a rubber band: flow is unconstrained inside the band and only
   // leaned against once price would otherwise wander off the ladder entirely.
-  let bias = state.regime.bias;
-  const excursion = ref - ANCHOR;
-  if (Math.abs(excursion) > 25) bias -= Math.sign(excursion) * 0.45;
+  // The feed is already bounded by its own rescaling, so it needs no rail.
+  if (!step) {
+    const excursion = ref - ANCHOR;
+    if (Math.abs(excursion) > 25) bias -= Math.sign(excursion) * 0.45;
+  }
 
   const roll = Math.random();
 
@@ -694,7 +757,9 @@ async function marketTick() {
       const book = side === "buy" ? snap.best_ask : snap.best_bid;
       if (book !== null) {
         const size = flowSize(false);
-        applyImpact(side, size, snap);
+        // Only model impact when price is ours to move. On a replay the path is
+        // already decided, and pushing fair value as well would fight the data.
+        if (!step) applyImpact(side, size, snap);
         return void (await submitOrder(side, null, size, "market"));
       }
     }
@@ -938,6 +1003,48 @@ function renderStats(s) {
   }
 }
 
+/* ---------------- price feed ---------------- */
+
+async function loadFeed() {
+  try {
+    const info = await fetch("/feed").then((r) => r.json());
+    if (!info.loaded) {
+      state.feed = { loaded: false, prices: [], index: 0, moves: [], lastAt: null };
+      $("feedLine").textContent = "synthetic flow — no market data downloaded";
+      return;
+    }
+
+    // pulled in chunks rather than one 86,000-element response
+    const prices = [];
+    while (prices.length < info.points) {
+      const chunk = await fetch(
+        `/feed/prices?start=${prices.length}&count=20000`
+      ).then((r) => r.json());
+      if (!chunk.prices || !chunk.prices.length) break;
+      prices.push(...chunk.prices);
+    }
+
+    state.feed = { loaded: true, prices, index: 0, moves: [], lastAt: null };
+    state.fair = prices[0];
+    state.ladderCentre = prices[0];
+    $("feedLine").textContent =
+      `replaying ${prices.length.toLocaleString()} points of real market data · instrument hidden`;
+    $("btnReveal").disabled = false;
+  } catch (_) {
+    $("feedLine").textContent = "synthetic flow — feed unavailable";
+  }
+}
+
+async function revealInstrument() {
+  const info = await fetch("/feed?reveal=1").then((r) => r.json());
+  if (!info.loaded) return;
+  const money = (v) => (v === null || v === undefined ? "?" : Number(v).toFixed(2));
+  $("feedLine").textContent =
+    `${info.symbol} · ${info.source} · ${info.interval} · ${info.day} ` +
+    `· real range ${money(info.real_low)} – ${money(info.real_high)}`;
+  $("btnReveal").disabled = true;
+}
+
 async function pollStats() {
   try {
     renderStats(await fetch("/journal/stats").then((r) => r.json()));
@@ -1111,6 +1218,7 @@ $("ladder").addEventListener("click", (e) => {
   else if (act === "cancel") cancelAt(cell.dataset.side, price);
 });
 
+$("btnReveal").addEventListener("click", revealInstrument);
 $("btnMktBuy").addEventListener("click", () => placeMarket("buy"));
 $("btnMktSell").addEventListener("click", () => placeMarket("sell"));
 $("btnCancelAll").addEventListener("click", cancelAll);
@@ -1186,6 +1294,8 @@ document.addEventListener("keydown", (e) => {
   else if (k === "c" && state.snapshot) { centreLadder(state.snapshot, true); render(state.snapshot); }
   else if (PRESETS[Number(k) - 1]) $("qty").value = PRESETS[Number(k) - 1];
 });
+
+loadFeed();
 
 // Same reasoning as the flow loop: never have two polls in flight.
 (async function pollLoop() {

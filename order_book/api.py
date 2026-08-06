@@ -1,4 +1,5 @@
 import os
+import pathlib
 import random
 import threading
 from itertools import count
@@ -11,10 +12,12 @@ from order_book.enums import OrderType, Side
 from order_book.journal import Journal
 from order_book.order import Order
 from order_book.position import Position
+from order_book.pricefeed import available_feeds, load_feed, load_random_feed
 
 SIDE_MAP = {"buy": Side.BUY, "sell": Side.SELL}
 ORDER_TYPE_MAP = {"limit": OrderType.LIMIT, "market": OrderType.MARKET}
 JOURNAL_OWNER = "me"
+DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data"
 
 
 def position_to_dict(position, mark_price):
@@ -52,7 +55,7 @@ def trade_to_dict(trade):
     }
 
 
-def create_app(journal_path=None):
+def create_app(journal_path=None, data_dir=None):
     app = Flask(__name__)
     app.book = OrderBook()
     app.order_id_counter = count(1)
@@ -62,6 +65,11 @@ def create_app(journal_path=None):
     app.journal_owner = JOURNAL_OWNER
     app.journal = Journal(journal_path or os.environ.get("TRADEFLOOR_JOURNAL", "journal.db"))
     app.session_id = app.journal.start_session()
+    # A real price path if one has been downloaded, otherwise the synthetic
+    # generator carries on as before — the simulator must still run with an
+    # empty data/ directory.
+    app.data_dir = pathlib.Path(data_dir) if data_dir is not None else DATA_DIR
+    app.feed = load_random_feed(app.data_dir)
     # The matching engine is deliberately single-threaded and lock-free (real
     # engines are, for determinism). Concurrency is the API layer's problem, so
     # every mutation of the shared book is serialised here.
@@ -386,6 +394,12 @@ def create_app(journal_path=None):
         app.journal.end_session(finished)
         app.session_id = app.journal.start_session()
 
+        # A new session draws a new instrument, so consecutive practice runs are
+        # not the same path memorised.
+        reloaded = load_random_feed(app.data_dir)
+        if reloaded is not None:
+            app.feed = reloaded
+
         return jsonify(status="reset", ended_session=finished, session_id=app.session_id)
 
     @app.get("/journal/session")
@@ -400,6 +414,51 @@ def create_app(journal_path=None):
             session_id=row["id"], started_at=row["started_at"],
             ended_at=row["ended_at"], fills=counted,
         )
+
+    @app.get("/feed")
+    def feed_info():
+        """The loaded feed, with the instrument withheld unless `?reveal=1`."""
+        if app.feed is None:
+            return jsonify(loaded=False, hint="run scripts/fetch_prices.py to download a feed")
+        return jsonify(loaded=True, **app.feed.describe(reveal=bool(request.args.get("reveal"))))
+
+    @app.get("/feed/prices")
+    def feed_prices():
+        """A slice of the rescaled series. Clients buffer rather than pulling
+        86,400 points in one response."""
+        if app.feed is None:
+            return jsonify(error="no feed loaded"), 404
+        try:
+            start = max(0, int(request.args.get("start", 0)))
+            count = max(1, min(20_000, int(request.args.get("count", 2000))))
+        except ValueError:
+            return jsonify(error="start and count must be integers"), 400
+
+        window = app.feed.prices[start:start + count]
+        return jsonify(start=start, count=len(window),
+                       total=len(app.feed), prices=window)
+
+    @app.post("/feed/load")
+    def feed_load():
+        """Load a feed, at random by default so the instrument is a surprise."""
+        data = request.get_json(silent=True) or {}
+        slug = data.get("slug")
+
+        if slug:
+            path = app.data_dir / f"{slug}.csv"
+            if not path.exists():
+                return jsonify(error=f"no feed named {slug}"), 404
+            app.feed = load_feed(path)
+        else:
+            app.feed = load_random_feed(app.data_dir)
+            if app.feed is None:
+                return jsonify(error="no feeds downloaded; see scripts/fetch_prices.py"), 404
+
+        return jsonify(loaded=True, **app.feed.describe())
+
+    @app.get("/feed/list")
+    def feed_list():
+        return jsonify([p.stem for p in available_feeds(app.data_dir)])
 
     @app.get("/journal/stats")
     def journal_stats():

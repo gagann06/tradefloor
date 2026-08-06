@@ -273,7 +273,8 @@ def bench_api(n):
     except ImportError:
         return None
 
-    app = create_app(journal_path=":memory:")   # don't touch the real journal
+    # in-memory journal and no feed: this measures the HTTP layer, not startup
+    app = create_app(journal_path=":memory:", data_dir="/nonexistent-benchmark-feeds")
     app.testing = True
     client = app.test_client()
     client.post("/book/seed", json={"mid": 100, "levels": 20})

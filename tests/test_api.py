@@ -4,9 +4,11 @@ from order_book.api import create_app
 
 
 @pytest.fixture
-def app():
-    # in-memory journal so tests neither touch nor create journal.db
-    application = create_app(journal_path=":memory:")
+def app(tmp_path):
+    # in-memory journal so tests neither touch nor create journal.db, and an
+    # empty data dir so they neither depend on downloaded feeds nor pay to
+    # rescale 86,000 points on every app construction
+    application = create_app(journal_path=":memory:", data_dir=tmp_path / "no-feeds")
     application.testing = True
     return application
 
@@ -702,3 +704,76 @@ def test_fresh_app_per_test_has_isolated_state(client):
     resp = client.get("/book/best")
 
     assert resp.get_json() == {"best_bid": None, "best_ask": None, "spread": None}
+
+
+# --------------------------- price feed ---------------------------
+
+def make_feed(directory, slug, prices):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{slug}.csv").write_text(
+        "timestamp,price\n" + "\n".join(f"{i},{p}" for i, p in enumerate(prices)),
+        encoding="utf-8")
+    (directory / f"{slug}.json").write_text(
+        '{"symbol": "SECRET", "source": "unit", "interval": "1s", "day": "2026-01-01"}',
+        encoding="utf-8")
+
+
+@pytest.fixture
+def fed_client(tmp_path):
+    make_feed(tmp_path / "feeds", "unit-SECRET-day", [10.0, 12.0, 11.0, 15.0, 9.0])
+    application = create_app(journal_path=":memory:", data_dir=tmp_path / "feeds")
+    application.testing = True
+    return application.test_client()
+
+
+def test_feed_reports_not_loaded_without_data(client):
+    body = client.get("/feed").get_json()
+
+    assert body["loaded"] is False
+    assert "hint" in body            # tells you how to get some
+
+
+def test_the_simulator_runs_without_any_feed(client):
+    """An empty data/ directory must not break anything."""
+    assert client.post("/orders", json={"side": "buy", "price": 100, "quantity": 5}).status_code == 201
+    assert client.get("/feed/prices").status_code == 404
+
+
+def test_feed_hides_the_instrument(fed_client):
+    body = fed_client.get("/feed").get_json()
+
+    assert body["loaded"] is True
+    assert body["points"] == 5
+    assert "symbol" not in body      # the whole point of trading it blind
+
+
+def test_feed_reveals_on_request(fed_client):
+    body = fed_client.get("/feed?reveal=1").get_json()
+
+    assert body["symbol"] == "SECRET"
+    assert body["source"] == "unit"
+
+
+def test_feed_prices_are_served_in_slices(fed_client):
+    body = fed_client.get("/feed/prices?start=1&count=2").get_json()
+
+    assert body["start"] == 1
+    assert body["count"] == 2
+    assert body["total"] == 5
+    assert len(body["prices"]) == 2
+
+
+def test_feed_prices_rejects_nonsense(fed_client):
+    assert fed_client.get("/feed/prices?start=x").status_code == 400
+
+
+def test_feed_list_and_named_load(fed_client):
+    assert fed_client.get("/feed/list").get_json() == ["unit-SECRET-day"]
+    assert fed_client.post("/feed/load", json={"slug": "unit-SECRET-day"}).status_code == 200
+    assert fed_client.post("/feed/load", json={"slug": "nope"}).status_code == 404
+
+
+def test_reset_draws_a_fresh_instrument(fed_client):
+    """Consecutive sessions should not replay the same path from memory."""
+    assert fed_client.post("/book/reset").status_code == 200
+    assert fed_client.get("/feed").get_json()["loaded"] is True
