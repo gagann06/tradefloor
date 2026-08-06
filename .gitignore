@@ -9,3 +9,16 @@ htmlcov/
 
 # generated benchmark output
 benchmarks/results*.json
+
+# AI assistant tooling and config
+.claude/
+CLAUDE.md
+.cursor/
+.cursorrules
+.cursorignore
+.aider*
+.continue/
+.windsurf/
+.windsurfrules
+.codeium/
+.github/copilot-instructions.md
