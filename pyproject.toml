@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "limit-order-book"
+name = "tradefloor"
 version = "0.1.0"
-description = "A limit order book matching engine"
+description = "Limit order book matching engine with a live depth-of-market terminal and P&L tracking"
 requires-python = ">=3.10"
 
 [tool.setuptools.packages.find]

@@ -6,3 +6,6 @@ __pycache__/
 venv/
 .coverage
 htmlcov/
+
+# generated benchmark output
+benchmarks/results*.json
