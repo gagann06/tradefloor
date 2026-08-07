@@ -569,8 +569,7 @@ const state = {
   intensity: 1,
   snapshot: null,
   flowIds: [],                 // synthetic resting orders, for churn
-  myOrders: new Map(),         // order_id -> order dict (mine only)
-  myIds: new Set(),
+  myOrders: new Map(),         // order_id -> order, refreshed from the server
   prices: [],
   lastPrice: null,
   prevPrice: null,
@@ -623,14 +622,11 @@ async function submitOrder(side, price, quantity, orderType = "limit", mine = fa
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || "rejected");
 
-  // only what actually rests can be cancelled later — a market order's
-  // remainder is cancelled outright, never booked
-  if (body.resting) {
-    if (mine) state.myIds.add(body.order_id);
-    else {
-      state.flowIds.push(body.order_id);
-      if (state.flowIds.length > 400) state.flowIds.splice(0, 200);
-    }
+  // the bots' resting ids are still tracked here so the flow can churn them;
+  // yours come back from the server on every frame and need no bookkeeping
+  if (body.resting && !mine) {
+    state.flowIds.push(body.order_id);
+    if (state.flowIds.length > 400) state.flowIds.splice(0, 200);
   }
   return body;
 }
@@ -641,33 +637,17 @@ const cancelOrder = (id) => fetch(`/orders/${id}`, { method: "DELETE" }).then((r
 // keeps the whole screen consistent and halves the request rate — at 5 frames a
 // second against a lock-serialised engine, a second round-trip per frame is the
 // difference between comfortable and connection-starved.
-const fetchSnapshot = async () => {
-  // remember which ids this request asked about — see applyWorking
-  const asked = [...state.myIds];
-  const snap = await fetch(
-    `/book/snapshot?trades=40&owner=${ME}&working=${asked.join(",")}`
-  ).then((r) => r.json());
-  snap.askedFor = asked;
-  return snap;
-};
+const fetchSnapshot = () =>
+  fetch(`/book/snapshot?trades=40&owner=${ME}`).then((r) => r.json());
 
-function applyWorking(list, asked) {
-  const askedFor = new Set(asked);
-  const returned = new Set(list.map((o) => o.order_id));
-
-  // Only forget an id the server was actually asked about and did not return —
-  // that means it filled or was cancelled. An id added while this request was in
-  // flight was never asked about, so its absence proves nothing; dropping it
-  // would orphan a live order that we could then neither see nor cancel.
-  for (const id of [...state.myIds]) {
-    if (askedFor.has(id) && !returned.has(id)) state.myIds.delete(id);
-  }
-
+// The server reports every order this owner still has resting, so the browser
+// holds no id list of its own. It used to, and a reload wiped it: the orders
+// stayed live in the book and kept filling, but vanished from the ladder and
+// could not be cancelled. Anything the client alone remembers is lost on
+// refresh, so the book is the only thing worth asking.
+function applyWorking(list) {
   state.myOrders.clear();
-  for (const o of list) {
-    state.myOrders.set(o.order_id, o);
-    state.myIds.add(o.order_id);
-  }
+  for (const o of list) state.myOrders.set(o.order_id, o);
 }
 
 /* ---------------- synthetic flow ---------------- */
@@ -1362,7 +1342,6 @@ $("btnReset").addEventListener("click", async () => {
   state.epoch++;
   state.flowIds = [];
   state.myOrders.clear();
-  state.myIds.clear();
   state.prices = [];
   state.lastPrice = state.prevPrice = null;
   state.seenTrades = 0;

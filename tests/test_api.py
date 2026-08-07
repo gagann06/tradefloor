@@ -400,29 +400,55 @@ def test_snapshot_reports_volume_profile_and_session_range(client):
     assert body["prev_price"] == 100
 
 
-def test_snapshot_returns_requested_working_orders(client):
-    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10})
-    client.post("/orders", json={"side": "buy", "price": 99, "quantity": 5})
-    client.post("/orders", json={"side": "sell", "price": 110, "quantity": 7})
+def test_snapshot_returns_every_order_the_owner_has_working(client):
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "me"})
+    client.post("/orders", json={"side": "sell", "price": 110, "quantity": 7, "owner": "me"})
+    client.post("/orders", json={"side": "buy", "price": 99, "quantity": 5, "owner": "flow"})
 
-    body = client.get("/book/snapshot?working=1,3,999").get_json()
+    body = client.get("/book/snapshot?owner=me").get_json()
 
-    assert [o["order_id"] for o in body["working_orders"]] == [1, 3]
+    assert [o["order_id"] for o in body["working_orders"]] == [1, 2]
     assert body["working_orders"][0]["price"] == 100
     assert body["working_orders"][1]["side"] == "sell"
 
 
+def test_a_client_that_has_forgotten_its_orders_still_sees_them(client):
+    """Regression: working orders were tracked only in the browser, so a reload
+    orphaned them. They stayed live and kept filling but vanished from the
+    ladder and could not be cancelled."""
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "me"})
+
+    # a brand new page load knows no order ids and asks for nothing
+    body = client.get("/book/snapshot?owner=me").get_json()
+
+    assert [o["order_id"] for o in body["working_orders"]] == [1]
+
+
+def test_snapshot_does_not_leak_other_owners_orders(client):
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "flow"})
+    client.post("/orders", json={"side": "buy", "price": 99, "quantity": 10, "owner": "other"})
+
+    assert client.get("/book/snapshot?owner=me").get_json()["working_orders"] == []
+    assert len(client.get("/book/snapshot?owner=flow").get_json()["working_orders"]) == 1
+
+
 def test_snapshot_working_orders_drop_out_once_filled(client):
-    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10})
-    assert client.get("/book/snapshot?working=1").get_json()["working_orders"] != []
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "me"})
+    assert client.get("/book/snapshot?owner=me").get_json()["working_orders"] != []
 
-    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 10})
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 10, "owner": "flow"})
 
-    assert client.get("/book/snapshot?working=1").get_json()["working_orders"] == []
+    assert client.get("/book/snapshot?owner=me").get_json()["working_orders"] == []
 
 
-def test_snapshot_working_orders_reject_non_integer_ids(client):
-    assert client.get("/book/snapshot?working=1,nope").status_code == 400
+def test_snapshot_reports_partially_filled_working_orders(client):
+    client.post("/orders", json={"side": "buy", "price": 100, "quantity": 10, "owner": "me"})
+    client.post("/orders", json={"side": "sell", "price": 100, "quantity": 4, "owner": "flow"})
+
+    working = client.get("/book/snapshot?owner=me").get_json()["working_orders"]
+
+    assert working[0]["original_quantity"] == 10
+    assert working[0]["remaining_quantity"] == 6
 
 
 def test_snapshot_session_range_is_none_before_any_trade(client):
