@@ -15,6 +15,12 @@ insert throughput flat across a 200x increase in book size
 232 tests
 ```
 
+![The trading terminal: depth-of-market ladder, position and P&L, price chart, time and sales, and the session review](docs/terminal.png)
+
+A live session above. The ladder is on the left with the last trade highlighted,
+the review along the bottom, and the verdict reads
+`+123.00 at mid  -  33.00 spread paid  =  +90.00 realised`.
+
 ---
 
 ## Quick start
