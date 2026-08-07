@@ -12,7 +12,7 @@ it useful.
 ```
 ~125,000 orders/sec sustained on mixed flow, p99 latency 18us
 insert throughput flat across a 200x increase in book size
-232 tests
+234 tests
 ```
 
 ![The trading terminal: depth-of-market ladder, position and P&L, price chart, time and sales, and the session review](docs/terminal.png)
@@ -308,7 +308,7 @@ as "on my laptop", not a guarantee.
 ## Tests
 
 ```
-tests/test_api.py         87   endpoints, ownership attribution, error paths
+tests/test_api.py         89   endpoints, ownership attribution, error paths
 tests/test_analysis.py    41   round trips, session stats, excursions
 tests/test_book.py        23   matching, price-time priority, sweeps, cancels
 tests/test_position.py    23   average cost, realised and unrealised, flips
@@ -357,3 +357,9 @@ tests/
   is generated. A faithful replay needs L3 market-by-order data.
 - Multiple instruments. One `OrderBook` currently means one symbol.
 - Iceberg orders, stop orders, self-trade prevention.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
