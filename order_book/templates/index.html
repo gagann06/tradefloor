@@ -379,16 +379,16 @@
   <div class="tick"><div class="lbl">Bid</div><div class="val b" id="tBid">—</div></div>
   <div class="tick"><div class="lbl">Ask</div><div class="val a" id="tAsk">—</div></div>
   <div class="tick"><div class="lbl">Spread</div><div class="val" id="tSpread">—</div></div>
-  <div class="tick"><div class="lbl">Hi / Lo</div><div class="val" id="tRange" style="font-size:12px">— / —</div></div>
+  <div class="tick"><div class="lbl">High / Low</div><div class="val" id="tRange" style="font-size:12px">— / —</div></div>
   <div class="tick"><div class="lbl">Volume</div><div class="val" id="tVol" style="font-size:12px">0</div></div>
   <div class="tick"><div class="lbl">Trades</div><div class="val" id="tCount" style="font-size:12px">0</div></div>
   <div class="sp"></div>
   <div class="ctrls">
-    <div class="conn"><span class="led" id="led"></span><span id="connTxt">FLOW OFF</span></div>
+    <div class="conn"><span class="led" id="led"></span><span id="connTxt">Flow stopped</span></div>
     <input type="range" id="rate" min="1" max="30" value="8" title="synthetic order flow rate">
     <span style="font-size:10px;color:var(--dim)" id="rateTxt">8/s</span>
-    <button id="btnFlow">Start flow</button>
-    <button id="btnReset" class="warn">Reset book</button>
+    <button id="btnFlow">Start Flow</button>
+    <button id="btnReset" class="warn">Reset Book</button>
   </div>
 </div>
 
@@ -398,11 +398,11 @@
   <section class="pane">
     <header>
       <span>Depth of Market</span>
-      <span class="aux" id="centreTxt">centred —</span>
+      <span class="aux" id="centreTxt">Centred</span>
     </header>
 
     <div class="ladder-head">
-      <div class="l">Vol</div>
+      <div class="l">Volume</div>
       <div>Buy</div>
       <div class="l">Bid</div>
       <div>Price</div>
@@ -432,20 +432,20 @@
         <button class="sell" id="btnMktSell">MARKET SELL</button>
       </div>
       <div class="admin-row">
-        <button id="btnCancelAll" class="warn">Cancel all</button>
+        <button id="btnCancelAll" class="warn">Cancel All</button>
         <button id="btnFlatten" class="warn">Flatten</button>
-        <button id="btnCentre" class="on">Auto-centre</button>
+        <button id="btnCentre" class="on">Auto Centre</button>
       </div>
       <div class="blotter">
-        <span>Working: <b id="wkCount">0</b> orders · <b id="wkQty">0</b> qty</span>
+        <span>Working Orders: <b id="wkCount">0</b> &nbsp;Quantity: <b id="wkQty">0</b></span>
         <span id="wkSides"></span>
       </div>
       <div class="note" id="note"></div>
       <div class="hints">
-        click <b class="b">bid</b> to buy &middot; <b class="a">ask</b> to sell &middot;
-        <b class="m">blue</b> to cancel &middot;
-        <kbd>B</kbd><kbd>S</kbd> market &middot; <kbd>F</kbd> flatten &middot;
-        <kbd>Esc</kbd> cancel all &middot; <kbd>C</kbd> centre
+        Click the <b class="b">bid</b> column to buy, the <b class="a">ask</b> column to
+        sell, or a <b class="m">blue</b> cell to cancel your orders at that price.<br>
+        Shortcuts: <kbd>B</kbd> Buy, <kbd>S</kbd> Sell, <kbd>F</kbd> Flatten,
+        <kbd>Esc</kbd> Cancel All, <kbd>C</kbd> Re-centre.
       </div>
     </div>
   </section>
@@ -454,12 +454,12 @@
   <div class="stack">
     <section class="pane pnl-pane">
       <header>
-        <span>Position &amp; P&amp;L</span>
-        <span class="aux" id="pnlAux">marked at last traded price</span>
+        <span>Position and P&amp;L</span>
+        <span class="aux" id="pnlAux">Marked at last traded price</span>
       </header>
       <div class="pnl">
         <div class="pnl-cell"><div class="k">Position</div><div class="v" id="pPos">FLAT</div></div>
-        <div class="pnl-cell"><div class="k">Avg entry</div><div class="v" id="pAvg">—</div></div>
+        <div class="pnl-cell"><div class="k">Average Entry</div><div class="v" id="pAvg">—</div></div>
         <div class="pnl-cell"><div class="k">Realised</div><div class="v" id="pReal">0.00</div></div>
         <div class="pnl-cell"><div class="k">Unrealised</div><div class="v" id="pUnreal">0.00</div></div>
         <div class="pnl-cell total"><div class="k">Total P&amp;L</div><div class="v" id="pTotal">0.00</div></div>
@@ -467,7 +467,7 @@
     </section>
 
     <section class="pane">
-      <header><span>Price</span><span class="aux" id="chartAux">mid</span></header>
+      <header><span>Price</span><span class="aux" id="chartAux">Mid price</span></header>
       <div class="chart">
         <svg class="px-chart" id="chart" viewBox="0 0 400 168" preserveAspectRatio="none" hidden>
           <g id="gGrid"></g>
@@ -475,71 +475,71 @@
           <polyline class="line" id="gLine" points=""></polyline>
           <line class="lastline" id="gLast" x1="0" x2="400" y1="0" y2="0"></line>
         </svg>
-        <div class="blank" id="chartBlank">NO TRADES</div>
+        <div class="blank" id="chartBlank">No trades yet</div>
       </div>
     </section>
 
     <section class="pane">
-      <header><span>Time &amp; Sales</span><span class="aux">aggressor inferred from order sequence</span></header>
+      <header><span>Time and Sales</span><span class="aux">Aggressor inferred from order sequence</span></header>
       <div class="tape" id="tape">
         <div class="ts-head"><div>Price</div><div class="sz">Size</div><div class="agg">Agg</div><div class="ids">Buyer / Seller</div></div>
-        <div class="blank" id="tapeBlank">NO FILLS</div>
+        <div class="blank" id="tapeBlank">No fills yet</div>
       </div>
     </section>
 
     <section class="pane review-pane">
       <header>
-        <span>Session review</span>
-        <span class="aux" id="reviewAux">this session</span>
+        <span>Session Review</span>
+        <span class="aux" id="reviewAux">Current session</span>
       </header>
 
       <div class="verdict" id="verdict">
-        <div class="v-cell"><div class="k">P&amp;L at mid</div><div class="v" id="rMid">—</div></div>
+        <div class="v-cell"><div class="k">P&amp;L at Mid</div><div class="v" id="rMid">—</div></div>
         <div class="v-op">−</div>
-        <div class="v-cell"><div class="k">Spread paid</div><div class="v" id="rSpread">—</div></div>
+        <div class="v-cell"><div class="k">Spread Paid</div><div class="v" id="rSpread">—</div></div>
         <div class="v-op">=</div>
         <div class="v-cell strong"><div class="k">Realised</div><div class="v" id="rNet">—</div></div>
       </div>
 
       <div class="review">
         <div class="rev-col">
-          <div class="rev-head">Direction — was I right?</div>
-          <div class="rev-row"><span>Round trips</span><b id="rTrips">0</b></div>
-          <div class="rev-row"><span>Win rate</span><b id="rWinRate">—</b></div>
-          <div class="rev-row"><span>Expectancy / trip</span><b id="rExp">—</b></div>
-          <div class="rev-row"><span>Avg win</span><b id="rAvgWin">—</b></div>
-          <div class="rev-row"><span>Avg loss</span><b id="rAvgLoss">—</b></div>
-          <div class="rev-row"><span>Best / worst</span><b id="rBestWorst">—</b></div>
+          <div class="rev-head">Direction</div>
+          <div class="rev-row"><span>Round Trips</span><b id="rTrips">0</b></div>
+          <div class="rev-row"><span>Win Rate</span><b id="rWinRate">—</b></div>
+          <div class="rev-row"><span>Expectancy per Trade</span><b id="rExp">—</b></div>
+          <div class="rev-row"><span>Average Win</span><b id="rAvgWin">—</b></div>
+          <div class="rev-row"><span>Average Loss</span><b id="rAvgLoss">—</b></div>
+          <div class="rev-row"><span>Largest Win / Loss</span><b id="rBestWorst">—</b></div>
         </div>
         <div class="rev-col">
-          <div class="rev-head">Execution — how did I trade?</div>
+          <div class="rev-head">Execution</div>
           <div class="rev-row"><span>Fills</span><b id="rFills">0</b></div>
-          <div class="rev-row"><span>Crossed</span><b id="rCrossed">—</b></div>
-          <div class="rev-row"><span>Avg when crossing</span><b id="rEdgeX">—</b></div>
-          <div class="rev-row"><span>Avg when resting</span><b id="rEdgeP">—</b></div>
-          <div class="rev-row"><span>Spread bill</span><b id="rBill">—</b></div>
-          <div class="rev-row"><span>Measured</span><b id="rMeasured">—</b></div>
+          <div class="rev-row"><span>Aggressive Fills</span><b id="rCrossed">—</b></div>
+          <div class="rev-row"><span>Average Cost When Crossing</span><b id="rEdgeX">—</b></div>
+          <div class="rev-row"><span>Average Gain When Resting</span><b id="rEdgeP">—</b></div>
+          <div class="rev-row"><span>Total Spread Cost</span><b id="rBill">—</b></div>
+          <div class="rev-row"><span>Fills Measured</span><b id="rMeasured">—</b></div>
         </div>
         <div class="rev-col">
-          <div class="rev-head">Excursion — did I sit through it?</div>
-          <div class="rev-row"><span>Avg worst drawdown</span><b id="rMae">—</b></div>
-          <div class="rev-row"><span>Avg best it reached</span><b id="rMfe">—</b></div>
-          <div class="rev-row"><span>Captured of available</span><b id="rCapture">—</b></div>
+          <div class="rev-head">Trade Excursion</div>
+          <div class="rev-row"><span>Average Drawdown Before Close</span><b id="rMae">—</b></div>
+          <div class="rev-row"><span>Average Peak Before Close</span><b id="rMfe">—</b></div>
+          <div class="rev-row"><span>Peak Profit Kept</span><b id="rCapture">—</b></div>
         </div>
         <div class="rev-col">
           <div class="rev-head">Session</div>
-          <div class="rev-row"><span>Price marks</span><b id="rMarks">—</b></div>
-          <div class="rev-row"><span>History</span><b id="rScope">this session</b></div>
+          <div class="rev-row"><span>Price Samples</span><b id="rMarks">—</b></div>
+          <div class="rev-row"><span>Showing</span><b id="rScope">this session</b></div>
           <div class="rev-row" style="margin-top:6px">
-            <button id="btnAllTime">All sessions</button>
-            <button id="btnClearHistory" class="warn">Clear history</button>
+            <button id="btnAllTime">All Sessions</button>
+            <button id="btnClearHistory" class="warn">Clear History</button>
           </div>
         </div>
       </div>
       <div class="review-note" id="reviewNote"></div>
       <div class="feed-strip">
-        <span id="feedLine">loading feed…</span>
-        <button id="btnReveal" disabled>Reveal instrument</button>
+        <span id="feedLine">Loading market data</span>
+        <button id="btnReveal" disabled>Reveal Instrument</button>
       </div>
     </section>
 
@@ -917,7 +917,7 @@ function renderLadder(snap) {
       `</div>`;
   }
   $("ladder").innerHTML = html;
-  $("centreTxt").textContent = `centred ${centre} · ${state.autoCentre ? "auto" : "locked"}`;
+  $("centreTxt").textContent = `Centred on ${centre}, ${state.autoCentre ? "auto" : "locked"}`;
 }
 
 /* ---------------- tape ---------------- */
@@ -980,7 +980,7 @@ function renderChart() {
   const ly = y(pts[pts.length - 1]).toFixed(1);
   $("gLast").setAttribute("y1", ly);
   $("gLast").setAttribute("y2", ly);
-  $("chartAux").textContent = `mid · ${lo.toFixed(1)} – ${hi.toFixed(1)}`;
+  $("chartAux").textContent = `Mid price, range ${lo.toFixed(1)} to ${hi.toFixed(1)}`;
 }
 
 /* ---------------- position & P&L ---------------- */
@@ -1009,7 +1009,7 @@ function renderPnl(pos) {
   $("pTotal").className = signClass(pos.total_pnl);
 
   $("pnlAux").textContent =
-    pos.mark_price === null ? "no trades yet — nothing to mark against" : `marked at ${pos.mark_price}`;
+    pos.mark_price === null ? "No trades yet, nothing to mark against" : `Marked at ${pos.mark_price}`;
 }
 
 /* ---------------- session review ---------------- */
@@ -1062,17 +1062,17 @@ function renderStats(s) {
   // capture rate is meaningless with nothing available to capture
   $("rCapture").textContent = measurable && s.avg_mfe ? pct(s.capture_rate) : "—";
   $("rCapture").className = s.capture_rate < 0 ? "neg" : s.capture_rate >= 0.6 ? "pos" : "";
-  $("rScope").textContent = state.statsScope === "all" ? "all sessions" : "this session";
+  $("rScope").textContent = state.statsScope === "all" ? "All sessions" : "Current session";
 
   const note = $("reviewNote");
   if (!s.trips) {
-    note.textContent = "No completed round trips yet — close a position to be scored.";
+    note.textContent = "No completed round trips yet. Close a position to be scored.";
     note.className = "review-note";
   } else if (s.total_spread_cost > Math.abs(s.total_pnl) && s.total_spread_cost > 0) {
-    note.textContent = `Spread cost you more than the whole session made or lost. At mid this was ${ticks(atMid)}.`;
+    note.textContent = `Spread cost more than the session made or lost. Executed at mid it would be ${ticks(atMid)}.`;
     note.className = "review-note warn";
   } else {
-    note.textContent = `Expectancy ${ticks(s.expectancy)} per trade over ${s.trips} trip${s.trips > 1 ? "s" : ""}.`;
+    note.textContent = `Expectancy of ${ticks(s.expectancy)} per trade across ${s.trips} round trip${s.trips > 1 ? "s" : ""}.`;
     note.className = "review-note";
   }
 }
@@ -1084,7 +1084,7 @@ async function loadFeed() {
     const info = await fetch("/feed").then((r) => r.json());
     if (!info.loaded) {
       state.feed = { loaded: false, prices: [], index: 0, moves: [], lastAt: null };
-      $("feedLine").textContent = "synthetic flow — no market data downloaded";
+      $("feedLine").textContent = "Synthetic price. No market data downloaded.";
       return;
     }
 
@@ -1102,10 +1102,10 @@ async function loadFeed() {
     state.fair = prices[0];
     state.ladderCentre = prices[0];
     $("feedLine").textContent =
-      `replaying ${prices.length.toLocaleString()} points of real market data · instrument hidden`;
+      `Replaying ${prices.length.toLocaleString()} points of real market data. Instrument hidden.`;
     $("btnReveal").disabled = false;
   } catch (_) {
-    $("feedLine").textContent = "synthetic flow — feed unavailable";
+    $("feedLine").textContent = "Synthetic price. Market data unavailable.";
   }
 }
 
@@ -1114,8 +1114,8 @@ async function revealInstrument() {
   if (!info.loaded) return;
   const money = (v) => (v === null || v === undefined ? "?" : Number(v).toFixed(2));
   $("feedLine").textContent =
-    `${info.symbol} · ${info.source} · ${info.interval} · ${info.day} ` +
-    `· real range ${money(info.real_low)} – ${money(info.real_high)}`;
+    `${info.symbol} from ${info.source}, ${info.interval} bars, ${info.day}. ` +
+    `Actual range ${money(info.real_low)} to ${money(info.real_high)}.`;
   $("btnReveal").disabled = true;
 }
 
@@ -1169,7 +1169,7 @@ function render(snap) {
   $("wkCount").textContent = state.myOrders.size;
   $("wkQty").textContent = wq;
   $("wkSides").innerHTML = state.myOrders.size
-    ? `<span style="color:var(--bid)">B ${wb}</span> · <span style="color:var(--ask)">S ${ws}</span>`
+    ? `<span style="color:var(--bid)">Buy ${wb}</span> &nbsp;<span style="color:var(--ask)">Sell ${ws}</span>`
     : "";
 
   renderPnl(snap.position);
@@ -1190,13 +1190,13 @@ async function poll() {
   try {
     snap = await fetchSnapshot();
   } catch (_) {
-    $("connTxt").textContent = "DISCONNECTED";
+    $("connTxt").textContent = "Disconnected";
     $("led").className = "led off";
     return;
   }
   if (epoch !== state.epoch) return;   // a reset landed mid-flight; drop this
 
-  $("connTxt").textContent = state.running ? "FLOW LIVE" : "FLOW OFF";
+  $("connTxt").textContent = state.running ? "Flow running" : "Flow stopped";
   $("led").className = `led ${state.running ? "on" : ""}`;
   applyWorking(snap.working_orders, snap.askedFor);
   // deliberately not wrapped: a rendering bug should surface in the console, not
@@ -1220,8 +1220,8 @@ async function placeLimit(side, price) {
     const filled = r.filled_quantity;
     note(
       filled
-        ? `#${r.order_id} ${side} ${price} — filled ${filled}${r.resting ? `, working ${r.remaining_quantity}` : ""}`
-        : `#${r.order_id} ${side} ${qty()} @ ${price} working`,
+        ? `Order #${r.order_id}: ${side} at ${price}, filled ${filled}${r.resting ? `, ${r.remaining_quantity} working` : ""}`
+        : `Order #${r.order_id}: ${side} ${qty()} at ${price}, working`,
       "ok"
     );
     poll();
@@ -1233,10 +1233,10 @@ async function placeMarket(side) {
     const r = await submitOrder(side, null, qty(), "market", true);
     note(
       !r.filled_quantity
-        ? `#${r.order_id} market ${side} — no liquidity`
+        ? `Order #${r.order_id}: market ${side} found no liquidity`
         : r.remaining_quantity
-        ? `#${r.order_id} market ${side} — filled ${r.filled_quantity}, ${r.remaining_quantity} cancelled`
-        : `#${r.order_id} market ${side} — filled ${r.filled_quantity}`,
+        ? `Order #${r.order_id}: market ${side} filled ${r.filled_quantity}, ${r.remaining_quantity} cancelled`
+        : `Order #${r.order_id}: market ${side} filled ${r.filled_quantity}`,
       "ok"
     );
     poll();
@@ -1249,27 +1249,27 @@ async function cancelAt(side, price) {
     .map((o) => o.order_id);
   if (!ids.length) return;
   await Promise.allSettled(ids.map(cancelOrder));
-  note(`cancelled ${ids.length} ${side} order${ids.length > 1 ? "s" : ""} at ${price}`, "ok");
+  note(`Cancelled ${ids.length} ${side} order${ids.length > 1 ? "s" : ""} at ${price}`, "ok");
   poll();
 }
 
 async function placeTypedLimit(side) {
   const price = Number($("limitPx").value);
-  if (!price || price < 1) return note("enter a price first", "err");
+  if (!price || price < 1) return note("Enter a price first", "err");
   placeLimit(side, price);
 }
 
 async function flatten() {
   const qty = state.position ? state.position.quantity : 0;
-  if (!qty) return note("already flat");
+  if (!qty) return note("Position is already flat");
   // market order in the opposite direction, sized to the position
   const side = qty > 0 ? "sell" : "buy";
   try {
     const r = await submitOrder(side, null, Math.abs(qty), "market", true);
     note(
       r.remaining_quantity
-        ? `flatten ${side} — filled ${r.filled_quantity}, ${r.remaining_quantity} unfilled (not enough liquidity)`
-        : `flattened: ${side} ${r.filled_quantity}`,
+        ? `Flatten ${side}: filled ${r.filled_quantity}, ${r.remaining_quantity} unfilled, not enough liquidity`
+        : `Flattened: ${side} ${r.filled_quantity}`,
       "ok"
     );
     poll();
@@ -1278,9 +1278,9 @@ async function flatten() {
 
 async function cancelAll() {
   const ids = [...state.myOrders.keys()];
-  if (!ids.length) return note("nothing working");
+  if (!ids.length) return note("No working orders");
   await Promise.allSettled(ids.map(cancelOrder));
-  note(`cancelled ${ids.length} working order${ids.length > 1 ? "s" : ""}`, "ok");
+  note(`Cancelled ${ids.length} working order${ids.length > 1 ? "s" : ""}`, "ok");
   poll();
 }
 
@@ -1301,7 +1301,7 @@ $("btnReveal").addEventListener("click", revealInstrument);
 
 $("btnAllTime").addEventListener("click", () => {
   state.statsScope = state.statsScope === "all" ? "session" : "all";
-  $("btnAllTime").textContent = state.statsScope === "all" ? "This session" : "All sessions";
+  $("btnAllTime").textContent = state.statsScope === "all" ? "Current Session" : "All Sessions";
   $("btnAllTime").classList.toggle("on", state.statsScope === "all");
   pollStats();
 });
@@ -1314,7 +1314,7 @@ $("btnClearHistory").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true }),
   });
-  note(res.ok ? "history cleared" : "could not clear history", res.ok ? "ok" : "err");
+  note(res.ok ? "History cleared" : "Could not clear history", res.ok ? "ok" : "err");
   pollStats();
 });
 $("btnMktBuy").addEventListener("click", () => placeMarket("buy"));
@@ -1342,9 +1342,9 @@ document.querySelectorAll(".presets button").forEach((b) =>
 
 $("btnFlow").addEventListener("click", async () => {
   state.running = !state.running;
-  $("btnFlow").textContent = state.running ? "Pause flow" : "Start flow";
+  $("btnFlow").textContent = state.running ? "Pause Flow" : "Start Flow";
   $("btnFlow").classList.toggle("on", state.running);
-  $("connTxt").textContent = state.running ? "FLOW LIVE" : "FLOW OFF";
+  $("connTxt").textContent = state.running ? "Flow running" : "Flow stopped";
   $("led").className = `led ${state.running ? "on" : ""}`;
   if (state.running) {
     // ask the server, don't trust the cached snapshot — right after a reset it
@@ -1371,7 +1371,7 @@ $("btnReset").addEventListener("click", async () => {
   state.regimeTicks = 0;
   state.ladderCentre = ANCHOR;
   state.position = null;
-  note("book reset — position and P&L cleared", "ok");
+  note("Book reset. Position and P&L cleared.", "ok");
   poll();
 });
 
