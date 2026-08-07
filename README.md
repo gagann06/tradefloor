@@ -52,8 +52,12 @@ pytest
 Start the terminal at <http://localhost:5000>:
 
 ```bash
-flask --app order_book.api:create_app run --debug
+tradefloor
 ```
+
+`pip install -e .` puts that command on your path. `--port`, `--host`,
+`--journal` and `--no-debug` are available, and `python -m order_book.api` does
+the same thing if you would rather not install the package.
 
 Download some real market data to trade against:
 

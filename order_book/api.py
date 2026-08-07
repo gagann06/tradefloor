@@ -1,3 +1,4 @@
+import argparse
 import os
 import pathlib
 import random
@@ -542,5 +543,20 @@ def create_app(journal_path=None, data_dir=None):
     return app
 
 
+def main():
+    """Entry point for the `tradefloor` console script and `python -m`."""
+    parser = argparse.ArgumentParser(description="Run the tradefloor trading terminal.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--journal", help="path to the journal database")
+    parser.add_argument("--no-debug", action="store_true",
+                        help="turn off the reloader and the debug page")
+    args = parser.parse_args()
+
+    app = create_app(journal_path=args.journal)
+    print(f"tradefloor: http://{args.host}:{args.port}")
+    app.run(host=args.host, port=args.port, debug=not args.no_debug)
+
+
 if __name__ == "__main__":
-    create_app().run(debug=True)
+    main()

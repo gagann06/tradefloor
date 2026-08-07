@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Limit order book matching engine with a live depth-of-market terminal and P&L tracking"
 requires-python = ">=3.10"
 
+[project.scripts]
+tradefloor = "order_book.api:main"
+
 [tool.setuptools.packages.find]
 include = ["order_book*"]
 
