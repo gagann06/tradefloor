@@ -25,6 +25,16 @@ the review along the bottom, and the verdict reads
 
 ## Quick start
 
+Requires Python 3.10 or newer, and `git`. On macOS use `python3` and `pip3` if
+`python` points at the system Python 2.
+
+Clone the repository and move into it:
+
+```bash
+git clone https://github.com/gagann06/tradefloor.git
+cd tradefloor
+```
+
 **macOS / Linux**
 
 ```bash
@@ -70,9 +80,6 @@ Benchmark the engine:
 ```bash
 python benchmarks/benchmark.py
 ```
-
-Requires Python 3.10 or newer. On macOS use `python3` and `pip3` if `python`
-points at the system Python 2.
 
 ---
 
