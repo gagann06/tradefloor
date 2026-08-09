@@ -359,7 +359,7 @@ tests/
 
 ---
 
-## Not built yet
+## Coming soon
 
 - **Trading bots to compare against.** Rule-based strategies trading the same
   book, so a session can be scored against them. Ownership and P&L are already
