@@ -1,7 +1,7 @@
 import heapq
 from order_book.enums import Side, OrderType
-from collections import deque
 from order_book.order import Order
+from order_book.price_level import PriceLevel
 from order_book.trade import Trade
 
 class OrderBook:
@@ -86,7 +86,7 @@ class OrderBook:
         best_price = self.best_bid()
         queue = self.bid_prices_to_orders[best_price]
 
-      resting_order = queue[0]
+      resting_order = queue.head
 
       match_qty = min(o.remaining_quantity, resting_order.remaining_quantity)
       o.remaining_quantity -= match_qty
@@ -102,7 +102,7 @@ class OrderBook:
       trades.append(Trade(price, quantity, buy_order_id, sell_order_id, o.timestamp))
 
       if resting_order.remaining_quantity == 0:
-        queue.popleft()
+        queue.pop_front()
         if not queue:
           if o.side == Side.BUY:
               self.ask_prices_to_orders.pop(best_price)
@@ -115,17 +115,19 @@ class OrderBook:
     if o.remaining_quantity > 0:
       if o.order_type == OrderType.LIMIT:
         if o.side == Side.BUY:
-          is_new_price_level = o.price not in self.bid_prices_to_orders
-          queue = self.bid_prices_to_orders.setdefault(o.price, deque())
-          queue.append(o)
-          if is_new_price_level:
+          queue = self.bid_prices_to_orders.get(o.price)
+          if queue is None:
+              queue = PriceLevel()
+              self.bid_prices_to_orders[o.price] = queue
               heapq.heappush(self.bid_prices_heap, -o.price)
-        else:
-          is_new_price_level = o.price not in self.ask_prices_to_orders
-          queue = self.ask_prices_to_orders.setdefault(o.price, deque())
           queue.append(o)
-          if is_new_price_level:
+        else:
+          queue = self.ask_prices_to_orders.get(o.price)
+          if queue is None:
+              queue = PriceLevel()
+              self.ask_prices_to_orders[o.price] = queue
               heapq.heappush(self.ask_prices_heap, o.price)
+          queue.append(o)
 
         self.order_id_to_order[o.order_id] = o
 
@@ -142,14 +144,14 @@ class OrderBook:
 
       if o.side == Side.BUY:
         queue = self.bid_prices_to_orders[price]
-        queue.remove(o)
+        queue.unlink(o)
         if not queue:
           self.bid_prices_to_orders.pop(price)
         self.order_id_to_order.pop(order_id)
 
       else:
         queue = self.ask_prices_to_orders[price]
-        queue.remove(o)
+        queue.unlink(o)
         if not queue:
           self.ask_prices_to_orders.pop(price)
         self.order_id_to_order.pop(order_id)

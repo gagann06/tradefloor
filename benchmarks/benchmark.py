@@ -102,7 +102,7 @@ def bench_order_construction(n, rng):
 
 def bench_resting_inserts(n, rng):
     """Best case: every order rests, nothing ever crosses. Pure insert path —
-    heap push on a new level, deque append on an existing one."""
+    heap push on a new level, tail append on an existing one."""
     book = OrderBook()
     orders = [limit(i, Side.BUY, rng.randint(1, 500), rng.randint(1, 100)) for i in range(1, n + 1)]
 
@@ -166,8 +166,9 @@ def bench_market_sweeps(n, rng):
 
 
 def bench_cancels(n, rng):
-    """Cancellation: O(1) to locate via the id index, O(k) to remove from the
-    deque at that price level."""
+    """Cancellation: O(1) to locate via the id index, O(1) to unlink from the
+    price level. The order carries its own prev/next links, so there is no scan
+    and the cost does not grow with how deep the level is."""
     book = OrderBook()
     ids = []
     for i in range(1, n + 1):
