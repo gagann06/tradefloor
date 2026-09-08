@@ -328,29 +328,37 @@ changes, which makes depth-per-level the single variable:
 | 1,000 | 4.61us | 0.96us |
 | 10,000 | 35.01us | 0.79us |
 
-Removing from the middle of a deque means scanning it for the position, so cost
-tracked depth however cheap the lookup was. Orders now carry their own prev/next
-links, so the order-ID index is sufficient to unlink and the cost is flat. The
-trade is about 1% of mixed-flow throughput, measured as a paired ratio of 0.987
-against the deque implementation.
+Removing from the middle of a deque means scanning it for the position, however
+cheap the lookup that found the order was. Orders now carry their own prev/next
+links, so the order-ID index is sufficient to unlink and the cost stays flat.
+
+At shallow depths the two are indistinguishable — the deque is marginally ahead
+at depth 10, which is measurement noise rather than a real ordering. The change
+only matters once levels get deep, and it costs about 1% of mixed-flow
+throughput to have it: a paired ratio of 0.987 against the deque implementation,
+measured within trials on identical order sequences.
 
 ### Insert throughput against book size
 
-| book size | price levels | ops/sec | range |
-|---:|---:|---:|---:|
-| 1,000 | 8,448 | 471,522 | 342,477-560,255 |
-| 10,000 | 12,642 | 530,949 | 345,232-560,095 |
-| 50,000 | 19,004 | 568,314 | 392,482-602,493 |
-| 200,000 | 20,000 | 580,178 | 389,956-637,503 |
+| book size | ops/sec | range |
+|---:|---:|---:|
+| 1,000 | 471,522 | 342,477-560,255 |
+| 10,000 | 530,949 | 345,232-560,095 |
+| 50,000 | 568,314 | 392,482-602,493 |
+| 200,000 | 580,178 | 389,956-637,503 |
 
 The book grew **200x** and throughput did not degrade; the per-trial ratio has a
 median of 1.20x. The reason is worth stating rather than presenting the data
-structures as magic. Probe prices are drawn from 1..20,000, so a small book
-opens a new price level on nearly every insert — a heap push and a new level —
-while a large book has already occupied almost every price, and an insert
-becomes a plain tail append. What flattens the curve is level saturation against
-a bounded price range, not size independence. With unbounded prices the heap
-would keep growing and the log n term would keep climbing.
+structures as magic. Prices are drawn from 1..20,000, and the number of occupied
+levels at each book size is 974, 7,866, 18,380 and 19,999 — so a small book opens
+a *new* price level on nearly every insert, paying a heap push and a level
+allocation, while a book of 200,000 has already occupied all but one of the
+available prices and an insert becomes a plain tail append.
+
+What flattens the curve is therefore level saturation against a bounded price
+range, not size independence. With unbounded prices the heap would keep growing
+and the log n term would keep climbing. The measurement is honest about the
+engine; it is not evidence of an insert whose cost never grows.
 
 One incidental finding: constructing an `Order` (p50 1.90us) costs more than
 inserting it into the book (p50 1.00us). That is `time.time_ns()` and validation,
