@@ -10,7 +10,8 @@ Everything above it exists to exercise that core and to make practising against
 it useful.
 
 ```
-~125,000 orders/sec sustained on mixed flow, p99 latency 18us
+~138,000 orders/sec sustained on mixed flow, p99 latency 13us
+O(1) cancellation, flat from 1 to 10,000 orders deep at a price
 insert throughput flat across a 200x increase in book size
 234 tests
 ```
@@ -164,9 +165,9 @@ The decisions worth explaining, and why they were made that way.
 
 ### Price levels: a dict *and* a heap
 
-Each side keeps a dict of `price -> deque` for O(1) access to any level, plus a
-heap of prices for the best bid or offer. Bids negate their prices so Python's
-min-heap yields the highest bid.
+Each side keeps a dict of `price -> PriceLevel` for O(1) access to any level,
+plus a heap of prices for the best bid or offer. Bids negate their prices so
+Python's min-heap yields the highest bid.
 
 Emptied levels are removed from the dict but left in the heap, because `heapq`
 has no cheap arbitrary removal. `best_bid()` and `best_ask()` peek the top and
@@ -175,15 +176,28 @@ operation O(log n) instead of paying O(n) to rebuild the heap.
 
 ### FIFO within a level
 
-Each level is a `collections.deque`, not a list. Both support append and
-pop-from-front, but `list.pop(0)` is O(n) because every remaining element
-shifts. Matching pops from the front on every fill, so that difference compounds.
+Each level is an intrusive doubly-linked list: orders carry their own `prev` and
+`next`, so the list nodes *are* the orders rather than wrappers pointing at them.
+Append at the tail, match from the head, which is time priority.
+
+This started as a `collections.deque`, which is the obvious choice and is O(1) at
+both ends. The problem is the one operation a deque cannot do: removing from the
+middle. A deque has no addressable interior, so `remove()` scans for the position,
+and cancellation only ever knows the *order*, never where it sits in the level.
+Linking through the orders themselves makes the object its own position.
 
 ### An order-id index
 
 `order_id -> Order` makes cancellation a direct lookup rather than a scan across
-every price level. Removal from the deque itself is still O(k) in the level's
-depth, which is an acceptable trade when cancels are rarer than fills.
+every price level — and because the order carries its own links, that lookup is
+now sufficient. Unlinking is pointer surgery, so cancellation is O(1) at any
+depth. Under the deque it was O(1) to *find* and O(k) to *remove*, which is a
+distinction worth being precise about: the index was never the slow part.
+
+Note what cancellation does *not* do: touch the heap. Emptying a level drops the
+dict key and leaves the price behind for lazy deletion to clear on the next read.
+Removing an arbitrary price from a heap would be O(n) to locate, so this is the
+decision that keeps cancels cheap — the linked list only removes the second cost.
 
 ### Market orders never rest
 
@@ -279,40 +293,74 @@ client rendering a ladder needs one request per frame rather than several.
 ## Benchmarks
 
 Measured **in-process**. Routing through HTTP would mostly measure Werkzeug,
-which costs around 470us per order against 8us of matching, so an end-to-end
-figure understates the engine by roughly 60x. The HTTP layer is reported
+which costs around 400us per order against 7us of matching, so an end-to-end
+figure understates the engine by roughly 55x. The HTTP layer is reported
 separately.
 
-CPython 3.14, single run:
+CPython 3.14, median of 15 trials with the observed range. Scenario order is
+shuffled within each trial, so nothing is systematically measured on a cold
+interpreter or a warm core:
 
-| scenario | ops/sec | mean | p50 | p99 |
+| scenario | ops/sec | range | p50 | p99 |
 |---|---:|---:|---:|---:|
-| Order construction | 381,112 | 2.62us | 2.00us | 5.30us |
-| Resting inserts, no matching | 578,522 | 1.73us | 1.20us | 3.10us |
-| Crossing orders, every one matches | 204,479 | 4.89us | 4.50us | 14.20us |
-| Market sweeps, multi-level | 57,209 | 17.48us | 14.00us | 40.50us |
-| Cancels | 234,617 | 4.26us | 2.60us | 16.60us |
-| **Mixed realistic flow** | **125,194** | **7.99us** | 2.60us | 17.90us |
+| Order construction | 419,765 | 351,723-434,475 | 1.90us | 4.20us |
+| Resting inserts, no matching | 680,031 | 600,627-767,581 | 1.00us | 2.30us |
+| Crossing orders, every one matches | 202,414 | 171,168-225,774 | 4.70us | 11.00us |
+| Market sweeps, multi-level | 59,249 | 45,263-64,272 | 14.70us | 41.60us |
+| Cancels | 529,957 | 325,123-553,907 | 1.40us | 2.70us |
+| **Mixed realistic flow** | **138,033** | 113,464-149,391 | 2.30us | 13.10us |
+| POST /orders, Flask test client | 2,456 | 2,159-2,567 | 315.40us | 1377.70us |
 
-Insert throughput against book size, which is the evidence that the data
-structures hold up rather than an assertion that they do:
+Mean latency is not listed because it is exactly `1,000,000 / ops_per_sec` and
+says nothing the throughput column does not.
 
-| book size | ops/sec |
-|---:|---:|
-| 1,000 | 448,716 |
-| 10,000 | 452,509 |
-| 50,000 | 464,100 |
-| 200,000 | 449,462 |
+### Cancellation against level depth
 
-The book grew **200x** and throughput was unchanged. A naive sorted-list
-implementation would degrade visibly here.
+Live order flow is dominated by cancels, so the cost is worth isolating. Book
+size is held at 20,000 resting orders and only the number of distinct prices
+changes, which makes depth-per-level the single variable:
 
-One incidental finding: constructing an `Order` (2.62us) costs more than
-inserting it into the book (1.73us). That is `time.time_ns()` and validation,
+| depth per level | deque | doubly-linked list |
+|---:|---:|---:|
+| 1 | 1.40us | 1.08us |
+| 10 | 0.82us | 0.93us |
+| 100 | 1.11us | 0.83us |
+| 1,000 | 4.61us | 0.96us |
+| 10,000 | 35.01us | 0.79us |
+
+Removing from the middle of a deque means scanning it for the position, so cost
+tracked depth however cheap the lookup was. Orders now carry their own prev/next
+links, so the order-ID index is sufficient to unlink and the cost is flat. The
+trade is about 1% of mixed-flow throughput, measured as a paired ratio of 0.987
+against the deque implementation.
+
+### Insert throughput against book size
+
+| book size | price levels | ops/sec | range |
+|---:|---:|---:|---:|
+| 1,000 | 8,448 | 471,522 | 342,477-560,255 |
+| 10,000 | 12,642 | 530,949 | 345,232-560,095 |
+| 50,000 | 19,004 | 568,314 | 392,482-602,493 |
+| 200,000 | 20,000 | 580,178 | 389,956-637,503 |
+
+The book grew **200x** and throughput did not degrade; the per-trial ratio has a
+median of 1.20x. The reason is worth stating rather than presenting the data
+structures as magic. Probe prices are drawn from 1..20,000, so a small book
+opens a new price level on nearly every insert — a heap push and a new level —
+while a large book has already occupied almost every price, and an insert
+becomes a plain tail append. What flattens the curve is level saturation against
+a bounded price range, not size independence. With unbounded prices the heap
+would keep growing and the log n term would keep climbing.
+
+One incidental finding: constructing an `Order` (p50 1.90us) costs more than
+inserting it into the book (p50 1.00us). That is `time.time_ns()` and validation,
 not matching.
 
-These are single-machine, single-run numbers with no repeat trials. Treat them
-as "on my laptop", not a guarantee.
+These are single-machine numbers from a Windows laptop. Trial-to-trial spread
+runs 17-43% depending on the scenario, so treat the medians as "on my laptop"
+rather than a guarantee, and prefer the paired ratios where a comparison is
+being made — those are computed within a trial against an identical order
+sequence, so machine drift cancels instead of landing on one side.
 
 ---
 
@@ -341,6 +389,7 @@ verified by driving the live page, not in the suite.
 order_book/
   order.py        the Order model and its validation
   book.py         the matching engine
+  price_level.py  the FIFO queue of orders resting at one price
   trade.py        an execution record
   position.py     average-cost position and P&L
   journal.py      SQLite storage for fills, marks and sessions
