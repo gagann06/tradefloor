@@ -13,7 +13,7 @@ it useful.
 ~138,000 orders/sec sustained on mixed flow, p99 latency 13us
 O(1) cancellation, flat from 1 to 10,000 orders deep at a price
 insert throughput flat across a 200x increase in book size
-234 tests
+262 tests
 ```
 
 ![The trading terminal: depth-of-market ladder, position and P&L, price chart, time and sales, and the session review](docs/terminal.png)
@@ -377,6 +377,7 @@ sequence, so machine drift cancels instead of landing on one side.
 ```
 tests/test_api.py         89   endpoints, ownership attribution, error paths
 tests/test_analysis.py    41   round trips, session stats, excursions
+tests/test_price_level.py 28   list surgery, head/tail/sole-element unlink
 tests/test_book.py        23   matching, price-time priority, sweeps, cancels
 tests/test_position.py    23   average cost, realised and unrealised, flips
 tests/test_journal.py     17   schema, persistence, threading
